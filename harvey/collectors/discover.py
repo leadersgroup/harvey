@@ -233,6 +233,49 @@ def name_matches_domain(name: str, domain: str) -> bool:
     return bool(stem and name and _segment_matches_domain(name, stem))
 
 
+def looks_like_brand(text: str) -> bool:
+    """An og:site_name that is a business name, not a slug ("hollisandkerr"),
+    a URL, a page label ("Home") or a search keyword ("Austin Tax Attorney")."""
+    text = (text or "").strip()
+    if not 2 <= len(text) <= 80 or "." in text.split()[-1] and " " not in text:
+        return False
+    if text.lower() in ("home", "homepage", "welcome", "blog", "index"):
+        return False
+    return any(ch.isupper() for ch in text) and not looks_like_keyword(text)
+
+
+# "Austin Tax Attorney", "AZ Tax Attorneys", "Texas sales tax attorney near
+# me": what someone searches for, not what a firm is called. A firm name
+# says law, firm, group, office or a legal form somewhere.
+_KEYWORD_TAIL = re.compile(r"(?i)\b(?:attorneys?|lawyers?|advisors?|planners?|agents?|cpas?)$")
+_FIRM_WORD = re.compile(r"(?i)\b(?:law|firm|group|offices?|partners|associates|pllc|llc|llp|"
+                        r"p\.?c\.?|p\.?a\.?|ltd|inc|chartered)\b|&")
+
+
+def looks_like_keyword(name: str) -> bool:
+    name = (name or "").strip(" .,|-")
+    # A search phrase, or a slogan ("NC's First Elder Law Firm", "#1 Tax Lawyers").
+    # The superlative isn't the name's first word: "First Republic Law" is a firm.
+    if re.search(r"(?i)\bnear me\b|(?:^|\s)#1\b|\s(?:first|best|top|leading|premier|number one)\b", name):
+        return True
+    return bool(_KEYWORD_TAIL.search(name)) and not _FIRM_WORD.search(name)
+
+
+def brand_name(html: str, domain: str) -> str:
+    """The name a business gives itself on its homepage: its declared
+    og:site_name (less any tagline after a separator), else the title
+    segment the domain backs up, else ""."""
+    m = (re.search(r'<meta[^>]+property=["\']og:site_name["\'][^>]*content=["\']([^"\']+)', html or "", re.I)
+         or re.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]*property=["\']og:site_name', html or "", re.I))
+    og = unescape(re.sub(r"\s+", " ", m.group(1))).strip() if m else ""
+    if looks_like_brand(og):
+        named = business_name(og, domain) if _TITLE_SEPARATORS.search(og) else og
+        if named and not looks_like_keyword(named):
+            return named[:120]
+    named = site_name_from_html(html, domain)
+    return "" if looks_like_keyword(named) else named
+
+
 def site_name_from_html(html: str, domain: str) -> str:
     """The business name a homepage gives itself (og:site_name, then <title>),
     or "" when neither names it in a way the domain backs up."""

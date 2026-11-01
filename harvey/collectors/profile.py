@@ -25,7 +25,7 @@ from harvey.startups import funding_text
 from harvey.collectors.ats import detect_board, matching_roles, read_board, role_keywords
 
 from harvey.collectors.discover import (
-    name_from_domain, name_matches_domain, site_name_from_html,
+    brand_name, looks_like_keyword, name_from_domain, name_matches_domain,
 )
 
 logger = logging.getLogger("harvey.collectors.profile")
@@ -1131,7 +1131,7 @@ class ProfileCollector:
             else:
                 logger.info(f"profile: {domain} unreachable")
             return obs
-        self.site_names[company_id] = site_name_from_html(home, domain)
+        self.site_names[company_id] = brand_name(home, domain)
 
         # Ads (they are spending TODAY — the strongest budget signal here)
         add("RUNNING_GOOGLE_ADS", num=1 if self._any(home, GOOGLE_ADS) else 0)
@@ -1288,9 +1288,11 @@ class ProfileCollector:
         is kept; generic industry and navigation text does not establish identity."""
         better = self.site_names.pop(company["id"], "")
         current = company.get("name") or ""
-        fallback = current == name_from_domain(domain)
-        if not better or better == current or (
-                name_matches_domain(current, domain) and not fallback):
+        # A name squashed from the domain, or a search keyword ("Austin Tax
+        # Attorney"), is always worth replacing; a real one only with a name
+        # the domain backs up better.
+        weak = current == name_from_domain(domain) or looks_like_keyword(current)
+        if not better or better == current or (not weak and name_matches_domain(current, domain)):
             return
         try:
             await self.state.rename_company(company["id"], better)

@@ -455,3 +455,22 @@ async def test_the_decision_maker_is_written_to_before_a_paralegal(state):  # no
     writer = Writer(brain=None, state=state, config=_cfg(provider="instantly"))
     kept = await writer._one_per_company(await state.get_prospects_by_status("new"))
     assert [p.email for p in kept] == ["mara@acme.example"]
+
+
+@pytest.mark.parametrize("name, keyword", [
+    ("Austin Tax Attorney", True), ("AZ Tax Attorneys", True), ("Pryor's First Elder Law Firm", True),
+    ("#1 Tax Lawyers", True), ("Pryor Tax Law", False), ("Hollis & Kerr", False),
+    ("First Republic Law", False), ("Brightwater Wealth Partners", False),
+])
+def test_search_keywords_and_slogans_are_not_names(name, keyword):
+    from harvey.collectors.discover import looks_like_keyword
+    assert looks_like_keyword(name) is keyword
+
+
+def test_brand_name_prefers_the_declared_name_over_a_keyword_title():
+    from harvey.collectors.discover import brand_name
+    html = ('<meta property="og:site_name" content="Brightwater Law PLC">'
+            '<title>Springfield Tax Attorneys | Brightwater Law PLC</title>')
+    assert brand_name(html, "springfieldtax.example") == "Brightwater Law PLC"
+    assert brand_name("<title>Springfield Tax Attorney | Pryor Tax Law</title>",
+                      "pryortaxlaw.example") == "Pryor Tax Law"

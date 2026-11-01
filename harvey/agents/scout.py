@@ -38,7 +38,7 @@ from bs4 import BeautifulSoup
 
 from harvey.brain import Brain
 from harvey.collectors import people as people_mod
-from harvey.collectors.discover import _TITLE_SEPARATORS, business_name, site_name_from_html
+from harvey.collectors.discover import brand_name, looks_like_brand, site_name_from_html  # noqa: F401
 from harvey.collectors.profile import _reads_like_title, looks_like_challenge
 from harvey.config import HarveyConfig, EnvConfig
 from harvey.integrations.email_finder import (
@@ -150,17 +150,6 @@ ROLE_WORD_RE = re.compile(
     r"accountants?|bookkeepers?|engineers?|developers?|designers?|technicians?|"
     r"consultants?|counsel|interns?|fellows?|staff|producers?|underwriters?|"
     r"executives?|leads?|heads?|vp|president)\b")
-
-
-def looks_like_brand(text: str) -> bool:
-    """An og:site_name that is a business name, not a slug ("hollisandkerr"),
-    a URL or a page label ("Home")."""
-    text = (text or "").strip()
-    if not 2 <= len(text) <= 80 or "." in text.split()[-1] and " " not in text:
-        return False
-    if text.lower() in ("home", "homepage", "welcome", "blog", "index"):
-        return False
-    return any(ch.isupper() for ch in text)
 
 
 def published_location(soup) -> str:
@@ -1482,18 +1471,11 @@ Respond ONLY with the JSON array."""
             if meta_desc and meta_desc.get("content"):
                 info["description"] = self._attr_str(meta_desc.get("content")).strip()[:500]
 
-            og_name = soup.find("meta", attrs={"property": "og:site_name"})
-            og = self._attr_str(og_name.get("content")).strip() if og_name else ""
-            if looks_like_brand(og):
-                # The name the site declares for itself ("Quillmont LLP"); a
-                # tagline after a separator ("… | Boutique Law Firm Serving
-                # NY") goes, keeping the part the domain backs up.
-                info["name"] = (business_name(og, domain) if _TITLE_SEPARATORS.search(og)
-                                else og)[:120]
-            elif named := site_name_from_html(resp.text, domain):
-                # The title segment the domain backs up: "… | Harbor Oak", not
-                # the keyword in front ("Springfield Financial Advisor").
-                info["name"] = named[:120]
+            # The name the site gives itself: its declared og:site_name less
+            # any tagline, else the title segment the domain backs up ("… |
+            # Harbor Oak"), never the search keyword in front.
+            if named := brand_name(resp.text, domain):
+                info["name"] = named
 
             if not info["description"]:
                 og_desc = soup.find("meta", attrs={"property": "og:description"})

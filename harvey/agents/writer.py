@@ -166,9 +166,14 @@ class Writer:
     async def _one_per_company(self, prospects: list) -> list:
         """At most one new cold contact per company, and none while a
         colleague's sequence is still running (COLLEAGUE_GAP_DAYS). A named
-        person beats the company inbox, a verified address a catch-all."""
+        person beats the company inbox, the decision maker a colleague."""
+        from harvey.collectors.people import owner_rank
+
         def rank(p):
-            return (p.is_company_inbox, (p.email_status or "") != "verified")
+            # A person before the inbox, a decision maker before a paralegal,
+            # then a verified address before a catch-all.
+            return (p.is_company_inbox, -owner_rank(p.title or ""),
+                    (p.email_status or "") != "verified")
         kept, companies = [], set()
         for p in sorted(prospects, key=rank):
             company = p.company_id or (p.email or "").rsplit("@", 1)[-1].lower()

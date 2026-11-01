@@ -58,6 +58,7 @@ elder litigation guardianship conservatorship deed deeds title tax taxes wealth
 advisor advisors adviser advisers advisory management planner planners retirement
 investment investments accounting bookkeeping payroll consultation consultations
 checklist checklists guide guides faq faqs resources resource forms worksheet
+date dated approved revised updated effective document documents version policy
 """.split())
 
 # Particles that sit lower-case inside a surname ("Van de Wal", "de la Cruz").

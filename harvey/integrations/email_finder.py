@@ -58,6 +58,8 @@ DEFAULT_PATTERN = "{f}.{l}"
 # invalid. Two at most: each is one verifier credit. Small firms use first@
 # and flast@ far more than first.last@.
 RETRY_PATTERNS = ("{f}", "{fi}{l}")
+# Domains where a full round of retries bounced, for as long as Harvey runs.
+_RETRIES_FAILED: set[str] = set()
 # A business with a handful of people and no evidence of its format: the
 # owner of a five-person roofing company is lou@, far more often than
 # lou.smith@. Still only a guess — never sent until a verifier confirms it.
@@ -886,7 +888,7 @@ async def find_email(
         except Exception:
             pass
 
-    if status == "invalid" and source in WEAK_SOURCES:
+    if status == "invalid" and source in WEAK_SOURCES and domain not in _RETRIES_FAILED:
         # The guess had no evidence behind it, and the mailbox doesn't exist:
         # try the next likeliest formats before giving up on the person.
         for alt in RETRY_PATTERNS:
@@ -910,6 +912,10 @@ async def find_email(
                 break
             if alt_status != "invalid":
                 break       # out of credits or undecided: stop spending
+        else:
+            # Every likely format bounced for this person: they will for
+            # their colleagues too, so the domain gets no more retries.
+            _RETRIES_FAILED.add(domain)
 
     if status is None:
         # Verification couldn't decide — an honest guess, never "verified".

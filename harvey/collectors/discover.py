@@ -176,6 +176,9 @@ def _segment_matches_domain(segment: str, stem: str) -> bool:
         return False
     if re.search(r"(?i)\bservices?\s+(?:in|near)\s+\S", segment):
         return False
+    # A search phrase ("Texas sales tax attorney near me") names no business.
+    if re.search(r"(?i)\bnear me\b|\bbest\b.*\b(?:attorneys?|lawyers?)\b", segment):
+        return False
     words = _words(segment)
     distinctive = [w for w in words if w not in _GENERIC_NAME_WORDS]
     if any(len(w) >= 3 and w in stem for w in distinctive):

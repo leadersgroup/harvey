@@ -402,3 +402,56 @@ async def test_a_published_address_is_used_and_nobody_else_is_guessed(monkeypatc
                                no_guess=True)
     assert (mara.email, mara.status) == ("mjh@hollislaw.example", "verified")
     assert theo.email == "" and checked == ["mjh@hollislaw.example"]
+
+
+def test_a_search_phrase_is_not_a_company_name():
+    from harvey.collectors.discover import business_name
+    assert business_name("Texas sales tax attorney near me | Pryor Tax Law",
+                         "pryortax.example") == "Pryor Tax Law"
+
+
+def test_document_page_words_are_not_a_person():
+    assert split_person_name("Date Approved") is None
+
+
+@pytest.mark.asyncio
+async def test_one_failed_round_of_retries_is_enough_for_a_domain(monkeypatch):
+    from harvey.integrations import email_finder as ef
+    monkeypatch.setattr(ef, "_RETRIES_FAILED", set())
+    checked = []
+
+    async def mx(domain):
+        return "mx.example.net"
+
+    async def pattern(domain, **kw):
+        return "{f}.{l}", "default", 0.3
+
+    async def verify(email, mx_type, env):
+        checked.append(email)
+        return "invalid", False
+    monkeypatch.setattr(ef, "get_mx_host", mx)
+    monkeypatch.setattr(ef, "derive_pattern", pattern)
+    monkeypatch.setattr(ef, "_verify_candidate", verify)
+    await ef.find_email("Mara", "Hollis", "hollislaw.example")
+    assert len(checked) == 3
+    await ef.find_email("Dana", "Pryor", "hollislaw.example")
+    assert checked[3:] == ["dana.pryor@hollislaw.example"]      # no retries this time
+
+
+@pytest.mark.asyncio
+async def test_the_decision_maker_is_written_to_before_a_paralegal(state):  # noqa: F811
+    import aiosqlite
+    from harvey.agents.writer import Writer
+    from harvey.models.company import Company
+    cid = await state.add_company(Company(name="Acme", domain="acme.example"))
+    await seed_prospect(state, email="pat@acme.example")
+    await seed_prospect(state, email="mara@acme.example")
+    async with aiosqlite.connect(state.db_path) as db:
+        await db.execute("UPDATE prospects SET company_id = ?, email_status = 'risky'", (cid,))
+        await db.execute("UPDATE prospects SET title = 'Paralegal' WHERE email = 'pat@acme.example'")
+        await db.execute("UPDATE prospects SET title = 'Founder & Managing Partner' "
+                         "WHERE email = 'mara@acme.example'")
+        await db.commit()
+    writer = Writer(brain=None, state=state, config=_cfg(provider="instantly"))
+    kept = await writer._one_per_company(await state.get_prospects_by_status("new"))
+    assert [p.email for p in kept] == ["mara@acme.example"]

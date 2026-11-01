@@ -250,6 +250,62 @@ def _disambiguate(local: str, people) -> Optional[tuple[str, float]]:
     return None
 
 
+# An address published within this many lines after a person's name, with
+# nothing but their title, phone or bio in between, is theirs: "William R.
+# Culp, Jr. / PARTNER / wrc@…". Further than that it may be a colleague's.
+NAME_TO_ADDRESS_LINES = 4
+
+
+def initials_fit(local: str, first: str, last: str) -> bool:
+    """wrc@ for William R. Culp, wc@ or wrcj@: two to four letters, starting
+    with the first name's initial and holding the last name's after it."""
+    local, first, last = local.lower(), _clean_name_part(first), _clean_name_part(last)
+    return (bool(first and last) and local.isalpha() and 2 <= len(local) <= 4
+            and local[0] == first[0] and last[0] in local[1:])
+
+
+def _fits_person(local: str, first: str, last: str) -> bool:
+    f, l = _clean_name_part(first), _clean_name_part(last)
+    return bool(infer_pattern_from_email(f"{local}@x", first, last)
+                or initials_fit(local, first, last)
+                or (len(l) >= 3 and l in local) or (len(f) >= 3 and local.startswith(f)))
+
+
+def addresses_next_to_names(
+    pages: list[str], people: list[tuple[str, str]], domain: str,
+) -> list[tuple[str, str, str]]:
+    """(address, first, last) for each on-domain address a page prints next
+    to a named person, and that fits them. This is how firms that use
+    initials (wrc@) or anything else without a name in it can be read: the
+    page says whose address it is, so no format has to be guessed."""
+    from harvey.collectors.people import page_lines
+    domain = _clean_domain(domain)
+    owners: dict[str, set[tuple[str, str]]] = {}
+    for html in pages:
+        # A mailto link's address counts as printed where the link is.
+        html = re.sub(r'(?is)<a\b[^>]*href=["\']mailto:([^"\'?]+)[^>]*>.*?</a>',
+                      lambda m: f" {m.group(1)} ", html or "")
+        lines = page_lines(html)
+        for i, line in enumerate(lines):
+            for addr in re.findall(r"[\w.+'-]+@[\w-]+(?:\.[\w-]+)+", line):
+                local, _, adomain = addr.lower().partition("@")
+                if adomain != domain or local in ROLE_LOCALS:
+                    continue
+                for back in range(0, NAME_TO_ADDRESS_LINES + 1):
+                    if i - back < 0:
+                        break
+                    text = lines[i - back].lower()
+                    named = [(f, l) for f, l in people
+                             if re.search(rf"\b{re.escape(f.lower())}\b.*\b{re.escape(l.lower())}\b", text)]
+                    if named:
+                        for f, l in named:
+                            if _fits_person(local, f, l):
+                                owners.setdefault(addr.lower(), set()).add((f, l))
+                        break   # the nearest name above is the one it belongs to
+    # An address two people could own is nobody's.
+    return [(addr, *next(iter(who))) for addr, who in owners.items() if len(who) == 1]
+
+
 def site_email_evidence(
     addresses: list[str], people: list[tuple[str, str]], domain: str,
 ) -> tuple[list[tuple[str, str, str]], str, float]:
@@ -752,6 +808,7 @@ async def find_email(
     known_emails: Optional[list[tuple[str, str, str]]] = None,
     default_pattern: str = DEFAULT_PATTERN,
     other_people: Optional[list[tuple[str, str]]] = None,
+    no_guess: bool = False,
 ) -> EmailResult:
     """Find and honestly grade one email for a person at a company.
 
@@ -765,6 +822,9 @@ async def find_email(
     one of them could own (jsmith@ for Jane when John Smith works there too,
     or an address published as theirs) is never guessed or verified for
     this person: a verifier would confirm the other person's mailbox.
+
+    ``no_guess``: the site's format can't be built from a name (initials),
+    so only a published address is tried.
     """
     domain = _clean_domain(domain)
     if not (first_name and last_name and domain):
@@ -789,6 +849,14 @@ async def find_email(
             candidate = email.strip().lower()
             pattern = infer_pattern_from_email(candidate, first, last) or pattern
             break
+    published = any(email.strip().lower() == candidate for email, _, _ in known_emails or [])
+    if no_guess and not published:
+        # The site's format (initials: wrc@) can't be built from a name, and
+        # this person's address isn't printed: a guess would only burn a
+        # verifier credit on a mailbox that doesn't exist.
+        logger.info(f"Email for {first_name} {last_name}@{domain}: the site uses a format "
+                    "Harvey can't build and doesn't print theirs; not guessed")
+        return EmailResult(email="", status="guess", pattern="", mx_type=mx_type)
     if _belongs_to_someone_else(candidate, pattern, (first_name, last_name), domain,
                                 other_people, known_emails):
         logger.info(f"Email for {first_name} {last_name}@{domain}: {candidate} could be "

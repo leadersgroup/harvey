@@ -42,8 +42,8 @@ from harvey.collectors.discover import _TITLE_SEPARATORS, business_name, site_na
 from harvey.collectors.profile import _reads_like_title, looks_like_challenge
 from harvey.config import HarveyConfig, EnvConfig
 from harvey.integrations.email_finder import (
-    DEFAULT_PATTERN, SMALL_BUSINESS_PATTERN, find_email, site_email_evidence,
-    verify_published_address,
+    DEFAULT_PATTERN, SMALL_BUSINESS_PATTERN, addresses_next_to_names, find_email,
+    infer_pattern_from_email, initials_fit, site_email_evidence, verify_published_address,
 )
 from harvey.integrations.linkedin import LinkedInAutomation
 from harvey.models.company import Company
@@ -1271,6 +1271,7 @@ class Scout:
                 known_emails=evidence.get("known") or None,
                 default_pattern=evidence.get("default", DEFAULT_PATTERN),
                 other_people=evidence.get("people") or None,
+                no_guess=bool(evidence.get("initials")),
             )
         except Exception as e:
             logger.debug(f"find_email failed for {domain}: {e}")
@@ -1602,19 +1603,31 @@ Respond ONLY with the JSON array."""
                 if addr not in addresses:
                     addresses.append(addr)
         site["addresses"] = addresses
-        await self._learn_email_evidence(domain, addresses, found)
+        await self._learn_email_evidence(domain, addresses, found,
+                                         pages=[html for _, html in site["pages"]])
         return found
 
-    async def _learn_email_evidence(self, domain: str, addresses: list[str], found: list[dict]):
+    async def _learn_email_evidence(self, domain: str, addresses: list[str], found: list[dict],
+                                    pages: list[str] | None = None):
         """Published addresses → the domain's pattern (and the exact address of
         anyone named on the site), plus the default to guess with when there
         is no evidence at all."""
         key = self._host(domain)
         named = [(p["first_name"], p["last_name"]) for p in found]
         known, pattern, confidence = site_email_evidence(addresses, named, key)
+        # An address printed next to someone's name is theirs, whatever its
+        # format: it beats any guess.
+        beside = addresses_next_to_names(pages or [], named, key)
+        have = {(f.lower(), l.lower()) for _, f, l in known}
+        known += [k for k in beside if (k[1].lower(), k[2].lower()) not in have]
+        # Initials (wrc@) can't be built from a name, so nobody whose address
+        # isn't printed is guessed for at all.
+        initials = any(initials_fit(a.split("@")[0], f, l)
+                       and not infer_pattern_from_email(a, f, l) for a, f, l in beside)
         self.__dict__.setdefault("_site_evidence", {})[key] = {
             "known": known,
             "people": named,
+            "initials": initials,
             "default": SMALL_BUSINESS_PATTERN if await self._known_small(key) else DEFAULT_PATTERN,
         }
         if pattern:

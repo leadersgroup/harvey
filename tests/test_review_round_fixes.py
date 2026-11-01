@@ -345,3 +345,60 @@ def test_a_tagline_in_og_site_name_is_dropped():
     from harvey.collectors.discover import business_name
     assert business_name("Pryor Law Firm | Boutique Law Firm Serving NY, NJ & AZ",
                          "pryorlawfirm.example") == "Pryor Law Firm"
+
+
+# ── addresses printed next to a name, and firms that use initials ──
+
+TEAM_PAGE = """
+<div class="card"><h3>Mara J. Hollis</h3><p>Partner</p><p>555-0100</p>
+  <a href="mailto:mjh@hollislaw.example">Email</a></div>
+<div class="card"><h3>Dana Pryor</h3><p>Associate</p><p>dkp@hollislaw.example</p></div>
+<div class="card"><h3>Theo Brightwater</h3><p>Of Counsel</p></div>
+<p>General questions: info@hollislaw.example</p>
+"""
+PEOPLE = [("Mara", "Hollis"), ("Dana", "Pryor"), ("Theo", "Brightwater")]
+
+
+def test_an_address_printed_under_a_name_is_theirs():
+    from harvey.integrations.email_finder import addresses_next_to_names
+    tied = addresses_next_to_names([TEAM_PAGE], PEOPLE, "hollislaw.example")
+    assert sorted(tied) == [("dkp@hollislaw.example", "Dana", "Pryor"),
+                            ("mjh@hollislaw.example", "Mara", "Hollis")]
+
+
+def test_an_address_that_does_not_fit_the_name_above_is_not_tied():
+    from harvey.integrations.email_finder import addresses_next_to_names
+    page = "<h3>Dana Pryor</h3><p>Associate</p><p>zq@hollislaw.example</p>"
+    assert addresses_next_to_names([page], PEOPLE, "hollislaw.example") == []
+
+
+@pytest.mark.parametrize("local, ok", [("mjh", True), ("mh", True), ("mjhj", True), ("mxyz", False),
+                                       ("jmh", False), ("m", False), ("mara", False)])
+def test_initials_fit(local, ok):
+    from harvey.integrations.email_finder import initials_fit
+    assert initials_fit(local, "Mara", "Hollis") is ok
+
+
+@pytest.mark.asyncio
+async def test_a_published_address_is_used_and_nobody_else_is_guessed(monkeypatch):
+    from harvey.integrations import email_finder as ef
+    checked = []
+
+    async def mx(domain):
+        return "mx.example.net"
+
+    async def pattern(domain, **kw):
+        return "{f}.{l}", "default", 0.3
+
+    async def verify(email, mx_type, env):
+        checked.append(email)
+        return "verified", False
+    monkeypatch.setattr(ef, "get_mx_host", mx)
+    monkeypatch.setattr(ef, "derive_pattern", pattern)
+    monkeypatch.setattr(ef, "_verify_candidate", verify)
+    known = [("mjh@hollislaw.example", "Mara", "Hollis")]
+    mara = await ef.find_email("Mara", "Hollis", "hollislaw.example", known_emails=known, no_guess=True)
+    theo = await ef.find_email("Theo", "Brightwater", "hollislaw.example", known_emails=known,
+                               no_guess=True)
+    assert (mara.email, mara.status) == ("mjh@hollislaw.example", "verified")
+    assert theo.email == "" and checked == ["mjh@hollislaw.example"]

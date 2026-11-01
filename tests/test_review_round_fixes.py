@@ -253,3 +253,52 @@ async def test_a_campaign_you_paused_in_instantly_gets_no_new_leads(state):  # n
     assert campaign.id == campaign_id
     await sender._deploy_campaign(campaign, top_up=True)
     assert added == [] and (await state.get_prospect(new)).status == "queued"
+
+
+# ── email: a guess with no evidence that bounces gets two more tries ──
+
+async def _find(monkeypatch, verdicts, source="default"):
+    from harvey.integrations import email_finder as ef
+    checked = []
+
+    async def mx(domain):
+        return "mx.example.net"
+
+    async def pattern(domain, **kw):
+        return "{f}.{l}", source, 0.3
+
+    async def verify(email, mx_type, env):
+        checked.append(email)
+        return verdicts.get(email.split("@")[0]), False
+    monkeypatch.setattr(ef, "get_mx_host", mx)
+    monkeypatch.setattr(ef, "derive_pattern", pattern)
+    monkeypatch.setattr(ef, "_verify_candidate", verify)
+    result = await ef.find_email("Mara", "Hollis", "hollislaw.example")
+    return result, checked
+
+
+@pytest.mark.asyncio
+async def test_a_bounced_guess_tries_first_then_flast(monkeypatch):
+    result, checked = await _find(monkeypatch, {"mara.hollis": "invalid", "mara": "invalid",
+                                               "mhollis": "verified"})
+    assert checked == ["mara.hollis@hollislaw.example", "mara@hollislaw.example",
+                       "mhollis@hollislaw.example"]
+    assert (result.email, result.status) == ("mhollis@hollislaw.example", "verified")
+
+
+@pytest.mark.asyncio
+async def test_an_undecided_retry_stops_spending_credits(monkeypatch):
+    result, checked = await _find(monkeypatch, {"mara.hollis": "invalid", "mara": None})
+    assert len(checked) == 2 and result.status == "invalid"
+
+
+@pytest.mark.asyncio
+async def test_a_pattern_with_evidence_is_not_second_guessed(monkeypatch):
+    result, checked = await _find(monkeypatch, {"mara.hollis": "invalid"}, source="site_address")
+    assert checked == ["mara.hollis@hollislaw.example"] and result.status == "invalid"
+
+
+def test_request_urls_with_api_keys_are_not_logged():
+    import logging
+    import harvey.main  # noqa: F401  (configures logging)
+    assert logging.getLogger("httpx").getEffectiveLevel() >= logging.WARNING

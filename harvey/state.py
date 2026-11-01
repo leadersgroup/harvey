@@ -2645,6 +2645,12 @@ class StateManager:
                 draft_campaigns = row[0] or 0
                 active_campaigns = row[1] or 0
             async with db.execute(
+                "SELECT COUNT(DISTINCT c.id) FROM campaigns c, json_each(c.prospect_ids_json) j "
+                "JOIN prospects p ON p.id = j.value WHERE c.status = 'active' "
+                "AND c.instantly_campaign_id != '' AND p.status = 'queued'"
+            ) as cursor:
+                instantly_top_ups = (await cursor.fetchone())[0]
+            async with db.execute(
                 "SELECT COUNT(*) FROM conversations WHERE status = 'open'"
             ) as cursor:
                 open_conversations = (await cursor.fetchone())[0]
@@ -2670,6 +2676,9 @@ class StateManager:
             "recent_unusable_prospects": await self.count_recent_unusable_prospects(),
             "draft_campaigns": draft_campaigns,
             "active_campaigns": active_campaigns,
+            # Live Instantly campaigns the Writer added prospects to, not yet
+            # uploaded: the heartbeat tops them up every cycle.
+            "instantly_top_ups": instantly_top_ups,
             # The kill switch: native sending stages nothing while it's set.
             "sending_paused": bool(await self.get_setting("sending_paused")),
             "open_conversations": open_conversations,

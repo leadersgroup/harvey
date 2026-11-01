@@ -1365,6 +1365,12 @@ async def profile_companies(state, companies: list[dict], config=None) -> tuple[
             n = await collector.run(companies, run_id=run_id)
         await state.finish_run(run_id, records=n, cost_usd=0.0)
         return n, run_id
+    except asyncio.CancelledError:
+        # Harvey shutting down mid-read: close the run, or the dashboard
+        # shows it as a job that died until the six-hour sweep.
+        await asyncio.shield(state.finish_run(run_id, status="stopped",
+                                              error="Harvey stopped mid-read"))
+        raise
     except Exception as e:
         await state.finish_run(run_id, status="failed", error=str(e))
         raise

@@ -324,6 +324,19 @@ class Sender:
                 logger.error(f"Sender: Failed to add leads to campaign {campaign.name}: {e}")
         await self._share_daily_limit()
 
+    async def top_up_live(self):
+        """Upload prospects the Writer added to live Instantly campaigns."""
+        if not self.config.channels.email.enabled or self.is_native:
+            return
+        for campaign in await self.state.get_campaigns_by_status("active"):
+            if not (campaign.instantly_campaign_id and await self._has_queued(campaign)):
+                continue
+            try:
+                await self._deploy_campaign(campaign, top_up=True)
+            except Exception as e:
+                logger.error(f"Sender: Failed to add leads to campaign {campaign.name}: {e}")
+        await self._share_daily_limit()
+
     async def _has_queued(self, campaign) -> bool:
         """Prospects the Writer added to this live campaign, not yet uploaded."""
         for pid in campaign.prospect_ids:

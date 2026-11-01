@@ -250,7 +250,9 @@ function actionText(a) {
   const n = (v, one, many) => (Number(v) || 0) + ' ' + ((Number(v) || 0) === 1 ? one : many);
   switch (a.action_type) {
     case 'prospect': return 'Found ' + n(d.prospects_found, 'new contact', 'new contacts');
-    case 'write_campaign': return 'Wrote “' + camp + '” for ' + n(d.prospect_count, 'contact', 'contacts');
+    case 'write_campaign': return d.joined
+      ? 'Added ' + n(d.prospect_count, 'contact', 'contacts') + ' to “' + camp + '”'
+      : 'Wrote “' + camp + '” for ' + n(d.prospect_count, 'contact', 'contacts');
     case 'write_failed': return 'Couldn’t write for some contacts' + (camp ? ' in “' + camp + '”' : '');
     case 'stage_campaign': return 'Queued ' + n(d.staged, 'email', 'emails') + ' from “' + camp + '”' +
       (d.mode ? ' · ' + escHtml(d.mode) : '');
@@ -499,6 +501,12 @@ async function loadLiveStatus() {
   const jobName = r => r.stage === 'profile' ? 'Reading websites'
     : r.stage === 'discover' ? 'Searching for businesses (' + (r.provider || '') + ')'
     : String(r.stage || 'Job');
+  // "Reading websites (4 times)", not the same name four times over.
+  const stoppedText = runs => {
+    const counts = new Map();
+    runs.forEach(r => counts.set(jobName(r), (counts.get(jobName(r)) || 0) + 1));
+    return [...counts].map(([name, n]) => escHtml(name) + (n > 1 ? ' (' + n + ' times)' : '')).join(', ');
+  };
   const running = d.running || [];
   const runningHtml = running.length
     ? running.map(r => '<span class="live-now"><span class="pulse"></span>' + escHtml(jobName(r)) +
@@ -506,7 +514,7 @@ async function loadLiveStatus() {
     : '<span class="live-now">Nothing running right now</span>';
   const stoppedHtml = (d.stopped || []).length
     ? '<div class="banner bad" style="margin:8px 0 0">' + icon('alert') + '<p style="color:inherit">' +
-      (d.stopped || []).map(r => escHtml(jobName(r))).join(', ') + ' stopped before finishing.</p></div>'
+      stoppedText(d.stopped || []) + ' stopped before finishing.</p></div>'
     : '';
   el.innerHTML =
     '<div class="live-head">' + runningHtml +

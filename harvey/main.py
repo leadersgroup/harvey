@@ -26,6 +26,10 @@ logging.basicConfig(
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
+# httpx logs every request's full URL at INFO, and some verifiers (Reoon)
+# take their API key in the query string: the log would hold the key.
+for _noisy in ("httpx", "httpcore"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
 logger = logging.getLogger("harvey")
 
 # Backoff for consecutive failed cycles: 60s, 120s, 240s, ... capped at 15 min
@@ -414,6 +418,10 @@ async def heartbeat(stop_event: asyncio.Event | None = None):
                 send_tasks.append(("send_campaign", sender.run))
             elif sender.is_native:
                 send_tasks.append(("send_outbox", sender.run))
+            elif summary.get("instantly_top_ups"):
+                # Prospects joined a live campaign: uploading them needs no
+                # model call, so it rides along instead of taking the cycle.
+                send_tasks.append(("top_up", sender.top_up_live))
             if sender.is_native or has_open_convos:
                 tasks.append(("handle_replies", handler.run()))
 

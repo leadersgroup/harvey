@@ -54,6 +54,10 @@ PATTERN_BUILDERS = {
     "{l}{fi}": lambda f, l: f"{l}{f[0]}",
 }
 DEFAULT_PATTERN = "{f}.{l}"
+# Tried, in order, when a guess with no evidence behind it comes back
+# invalid. Two at most: each is one verifier credit. Small firms use first@
+# and flast@ far more than first.last@.
+RETRY_PATTERNS = ("{f}", "{fi}{l}")
 # A business with a handful of people and no evidence of its format: the
 # owner of a five-person roofing company is lou@, far more often than
 # lou.smith@. Still only a guess — never sent until a verifier confirms it.
@@ -813,6 +817,31 @@ async def find_email(
             await state.save_email_pattern(domain, mx_type=mx_type, is_catch_all=1)
         except Exception:
             pass
+
+    if status == "invalid" and source in WEAK_SOURCES:
+        # The guess had no evidence behind it, and the mailbox doesn't exist:
+        # try the next likeliest formats before giving up on the person.
+        for alt in RETRY_PATTERNS:
+            if alt == pattern:
+                continue
+            other = build_email(alt, first_name, last_name, domain)
+            if not other or other == candidate or _belongs_to_someone_else(
+                    other, alt, (first_name, last_name), domain, other_people, known_emails):
+                continue
+            alt_status, _ = await _verify_candidate(other, mx_type, env)
+            logger.info(f"Email for {first_name} {last_name}@{domain}: retry {other} [{alt_status}]")
+            if alt_status == "verified":
+                candidate, pattern, status = other, alt, alt_status
+                if state is not None:
+                    try:
+                        # Confirmed by a verifier: the domain's format from now on.
+                        await state.save_email_pattern(domain, pattern=alt, source="verified_retry",
+                                                       confidence=0.85, mx_type=mx_type)
+                    except Exception as e:
+                        logger.debug(f"Pattern cache write failed for {domain}: {e}")
+                break
+            if alt_status != "invalid":
+                break       # out of credits or undecided: stop spending
 
     if status is None:
         # Verification couldn't decide — an honest guess, never "verified".

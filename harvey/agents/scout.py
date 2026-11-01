@@ -1394,8 +1394,8 @@ Respond ONLY with the JSON array."""
         before it reaches anyone's {{company}}. The page is read once per
         cycle and reused for the people on it."""
         label = domain.split(".")[0].replace("-", "").lower()
-        if not (name == name_from_domain(domain) or looks_like_keyword(name)
-                or name.replace(" ", "").lower() == label):
+        squashed = " " not in name.strip() and name.lower() == label     # "Lgbs", "AntonLegal"
+        if not (name == name_from_domain(domain) or looks_like_keyword(name) or squashed):
             return name
         try:
             site = await self._read_site(domain)

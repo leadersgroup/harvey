@@ -493,3 +493,12 @@ async def test_backfill_renames_a_squashed_name_from_the_homepage(state):  # noq
     # A real name is left alone, without even reading the site.
     scout._read_site = None
     assert await scout._better_name(cid, "pryorwynn.example", "Pryor Wynn LLP") == "Pryor Wynn LLP"
+
+
+@pytest.mark.asyncio
+async def test_a_spaced_name_matching_the_domain_is_not_weak(state):  # noqa: F811
+    from harvey.agents.scout import Scout
+    scout = Scout.__new__(Scout)
+    scout.state = state
+    scout._read_site = None     # would raise if read
+    assert await scout._better_name("x", "pryorwynn.example", "Pryor Wynn") == "Pryor Wynn"

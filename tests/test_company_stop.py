@@ -233,6 +233,8 @@ async def test_instantly_campaigns_stop_for_the_whole_company():
     sent = {}
 
     async def fake_request(method, path, body=None, **kw):
+        if path == "/accounts":
+            return {"items": [{"email": "sender@example.com"}]}
         sent.update(body or {})
         return {"id": "c1"}
     client._request = fake_request

@@ -149,14 +149,48 @@ class InstantlyClient:
 
     # ── Campaigns ──
 
-    async def create_campaign(self, name: str) -> dict | None:
-        """Create a new campaign. Returns campaign data with id."""
-        # stop_for_company: a reply from anyone at a company stops the
-        # sequence to everyone there, as on Harvey's own providers.
-        result = await self._request("POST", "/campaigns",
-                                     {"name": name, "stop_for_company": True})
+    async def active_account_emails(self) -> list[str]:
+        """The workspace's sending mailboxes that are connected and active."""
+        result = await self._request("GET", "/accounts", params={"limit": 100, "status": 1})
+        return [a["email"] for a in self._extract_items(result)
+                if isinstance(a, dict) and a.get("email")]
+
+    async def create_campaign(
+        self,
+        name: str,
+        timezone: str = "UTC",
+        daily_limit: int | None = None,
+    ) -> dict | None:
+        """Create a campaign that sends from every active mailbox, weekdays
+        9-5 in ``timezone``. Returns campaign data with id."""
+        accounts = await self.active_account_emails()
+        if not accounts:
+            logger.error("Instantly has no active sending accounts; can't create a campaign.")
+            return None
+        body = {
+            "name": name,
+            "campaign_schedule": {"schedules": [{
+                "name": "Weekdays",
+                "timing": {"from": "09:00", "to": "17:00"},
+                "days": {str(d): True for d in range(1, 6)},
+                "timezone": instantly_timezone(timezone),
+            }]},
+            "email_list": accounts,
+            # stop_for_company: a reply from anyone at a company stops the
+            # sequence to everyone there, as on Harvey's own providers.
+            "stop_for_company": True,
+            "stop_on_reply": True,
+            # Plain text, as written: no tracking pixel or rewritten links.
+            "text_only": True,
+            "open_tracking": False,
+            "link_tracking": False,
+        }
+        if daily_limit:
+            body["daily_limit"] = daily_limit
+        result = await self._request("POST", "/campaigns", body)
         if isinstance(result, dict):
-            logger.info(f"Created campaign: {name} (id={result.get('id')})")
+            logger.info(f"Created campaign: {name} (id={result.get('id')}, "
+                        f"{len(accounts)} sending accounts)")
             return result
         return None
 
@@ -170,25 +204,14 @@ class InstantlyClient:
         result = await self._request("GET", "/campaigns", params={"limit": limit})
         return self._extract_items(result)
 
-    async def update_campaign_schedule(
-        self,
-        campaign_id: str,
-        schedule: dict,
-    ) -> dict | None:
-        """Update campaign sending schedule."""
-        result = await self._request(
-            "PATCH", f"/campaigns/{campaign_id}", {"schedule": schedule}
-        )
-        return result if isinstance(result, dict) else None
-
     async def activate_campaign(self, campaign_id: str) -> dict | None:
         """Start a campaign."""
-        result = await self._request("POST", f"/campaigns/{campaign_id}/activate")
+        result = await self._request("POST", f"/campaigns/{campaign_id}/activate", {})
         return result if isinstance(result, dict) else None
 
     async def pause_campaign(self, campaign_id: str) -> dict | None:
         """Pause a campaign."""
-        result = await self._request("POST", f"/campaigns/{campaign_id}/pause")
+        result = await self._request("POST", f"/campaigns/{campaign_id}/pause", {})
         return result if isinstance(result, dict) else None
 
     # ── Campaign Emails (Sequences) ──
@@ -200,20 +223,20 @@ class InstantlyClient:
     ) -> dict | None:
         """Set the email sequence for a campaign.
 
-        sequences format:
+        sequences format (Harvey's: ``wait`` is days after the previous step):
         [
             {
                 "subject": "Subject line",
-                "body": "Email body (HTML or plain text)",
-                "wait": 0  # days to wait after previous step
+                "body": "Plain-text body",
+                "wait": 0
             },
             ...
         ]
         """
         result = await self._request(
-            "POST",
-            f"/campaigns/{campaign_id}/emails",
-            {"sequences": [sequences]},
+            "PATCH",
+            f"/campaigns/{campaign_id}",
+            {"sequences": [{"steps": instantly_steps(sequences)}]},
         )
         return result if isinstance(result, dict) else None
 
@@ -233,24 +256,27 @@ class InstantlyClient:
                 "first_name": "John",
                 "last_name": "Doe",
                 "company_name": "Acme Inc",
-                "variables": {"custom_var": "value"}
+                "custom_variables": {"custom_var": "value"}
             }
         ]
         """
         if not leads:
             logger.warning("add_leads called with an empty lead list; skipping.")
             return {}
-        result = await self._request(
-            "POST",
-            "/leads",
-            {"campaign_id": campaign_id, "leads": leads},
-        )
-        return result if isinstance(result, dict) else None
-
-    async def get_lead(self, email: str) -> dict | None:
-        """Get lead details by email."""
-        result = await self._request("GET", "/leads", params={"email": email})
-        return result if isinstance(result, dict) else None
+        result = None
+        for start in range(0, len(leads), LEADS_PER_REQUEST):
+            result = await self._request(
+                "POST",
+                "/leads/add",
+                # Someone already in another of the user's campaigns isn't
+                # emailed twice.
+                {"campaign_id": campaign_id,
+                 "leads": leads[start:start + LEADS_PER_REQUEST],
+                 "skip_if_in_workspace": True},
+            )
+            if not isinstance(result, dict):
+                return None
+        return result
 
     # ── Replies / Emails ──
 
@@ -259,26 +285,50 @@ class InstantlyClient:
     ) -> list:
         """Get emails sent for a campaign."""
         result = await self._request(
-            "GET", "/emails", params={"campaign_id": campaign_id, "limit": limit}
+            "GET", "/emails",
+            params={"campaign_id": campaign_id, "email_type": "sent", "limit": limit},
         )
         return self._extract_items(result)
 
     async def get_replies(self, campaign_id: str | None = None) -> list:
-        """Get replies, optionally filtered by campaign."""
-        params = {"campaign_id": campaign_id} if campaign_id else None
-        result = await self._request("GET", "/emails/replies", params=params)
-        return self._extract_items(result)
+        """Get replies, optionally filtered by campaign, as
+        {uuid, lead_email, body, subject} dicts."""
+        params = {"email_type": "received", "limit": 100}
+        if campaign_id:
+            params["campaign_id"] = campaign_id
+        result = await self._request("GET", "/emails", params=params)
+        replies = []
+        for email in self._extract_items(result):
+            if not isinstance(email, dict):
+                continue
+            body = email.get("body")
+            text = body.get("text") if isinstance(body, dict) else body
+            replies.append({
+                "uuid": email.get("id") or "",
+                "lead_email": email.get("lead") or email.get("from_address_email") or "",
+                "body": text or email.get("content_preview") or "",
+                "subject": email.get("subject") or "",
+            })
+        return replies
 
     async def send_reply(
         self,
         reply_to_uuid: str,
         body: str,
     ) -> dict | None:
-        """Send a reply to a lead's email."""
+        """Send a reply to a lead's email, from the mailbox it was sent to."""
+        original = await self._request("GET", f"/emails/{reply_to_uuid}")
+        if not isinstance(original, dict) or not original.get("eaccount"):
+            logger.error(f"Instantly: can't find the email {reply_to_uuid} to reply to.")
+            return None
+        subject = original.get("subject") or ""
+        if not subject.lower().startswith("re:"):
+            subject = "Re: " + subject
         result = await self._request(
             "POST",
             "/emails/reply",
-            {"reply_to_uuid": reply_to_uuid, "body": body},
+            {"reply_to_uuid": reply_to_uuid, "eaccount": original["eaccount"],
+             "subject": subject, "body": {"text": body, "html": text_to_html(body)}},
         )
         return result if isinstance(result, dict) else None
 
@@ -286,17 +336,89 @@ class InstantlyClient:
 
     async def get_campaign_analytics(self, campaign_id: str) -> dict | None:
         """Get campaign performance stats."""
-        result = await self._request("GET", f"/campaigns/{campaign_id}/analytics")
-        return result if isinstance(result, dict) else None
+        result = await self._request("GET", "/campaigns/analytics", params={"id": campaign_id})
+        items = self._extract_items(result)
+        return items[0] if items and isinstance(items[0], dict) else None
 
     # ── Account / Warmup ──
 
     async def list_accounts(self) -> list:
         """List connected email accounts."""
-        result = await self._request("GET", "/accounts")
+        result = await self._request("GET", "/accounts", params={"limit": 100})
         return self._extract_items(result)
 
-    async def check_warmup_status(self, account_id: str) -> dict | None:
-        """Check warmup status for an email account."""
-        result = await self._request("GET", f"/accounts/{account_id}/warmup")
-        return result if isinstance(result, dict) else None
+
+# Instantly's names for Harvey's merge tags. The rest ({{company}},
+# {{title}}, {{personalization}}) travel as lead variables of the same name.
+INSTANTLY_TAGS = {"first_name": "firstName", "last_name": "lastName"}
+
+LEADS_PER_REQUEST = 1000
+
+# Instantly accepts only these zones for a schedule; any other is matched to
+# one that keeps the same offsets through the year.
+INSTANTLY_TIMEZONES = (
+    "America/Detroit", "America/Chicago", "America/Boise", "America/Creston",
+    "America/Dawson", "America/Anchorage", "Etc/GMT+10", "America/Regina",
+    "America/Bogota", "America/Caracas", "America/Sao_Paulo", "America/St_Johns",
+    "Europe/Isle_of_Man", "Africa/Abidjan", "Europe/Belgrade", "Africa/Algiers",
+    "Europe/Helsinki", "Europe/Istanbul", "Asia/Dubai", "Asia/Karachi",
+    "Asia/Kolkata", "Asia/Dhaka", "Asia/Hong_Kong", "Australia/Perth",
+    "Asia/Taipei", "Australia/Brisbane", "Australia/Melbourne",
+    "Pacific/Auckland", "Etc/GMT+12",
+)
+
+
+def instantly_timezone(name: str) -> str:
+    """The Instantly schedule zone that matches IANA zone ``name``."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+    if name in INSTANTLY_TIMEZONES:
+        return name
+    # Instantly's list has no zone that still keeps US Pacific time; its
+    # Pacific entry is America/Dawson.
+    if name in ("America/Los_Angeles", "America/Vancouver", "America/Tijuana", "US/Pacific"):
+        return "America/Dawson"
+    try:
+        zone = ZoneInfo(name or "UTC")
+    except (ZoneInfoNotFoundError, ValueError):
+        return "America/Chicago"
+
+    def offsets(z):
+        return tuple(datetime(2026, month, 1, 12, tzinfo=z).utcoffset() for month in (1, 7))
+
+    want = offsets(zone)
+    for candidate in INSTANTLY_TIMEZONES:
+        if offsets(ZoneInfo(candidate)) == want:
+            return candidate
+    return "Africa/Abidjan" if want == offsets(ZoneInfo("UTC")) else "America/Chicago"
+
+
+def text_to_html(text: str) -> str:
+    """Plain text as the HTML Instantly sends: escaped, a <div> per line as
+    its editor writes it. Instantly drops text that sits outside an element."""
+    import html
+    return "".join(
+        f"<div>{html.escape(line, quote=False)}</div>" if line.strip() else "<div><br /></div>"
+        for line in (text or "").split("\n")
+    )
+
+
+def instantly_steps(sequence: list[dict]) -> list[dict]:
+    """Harvey's steps as Instantly's. Harvey's ``wait`` is days after the
+    previous email; Instantly's ``delay`` is days before the next one."""
+    steps = []
+    for i, step in enumerate(sequence):
+        subject, body = step.get("subject") or "", step.get("body") or ""
+        for ours, theirs in INSTANTLY_TAGS.items():
+            for tag in ("{{" + ours + "}}", "{{ " + ours + " }}"):
+                subject = subject.replace(tag, "{{" + theirs + "}}")
+                body = body.replace(tag, "{{" + theirs + "}}")
+        following = sequence[i + 1].get("wait", 0) if i + 1 < len(sequence) else 0
+        steps.append({
+            "type": "email",
+            "delay": max(int(following or 0), 0),
+            "delay_unit": "days",
+            "variants": [{"subject": subject, "body": text_to_html(body)}],
+        })
+    return steps

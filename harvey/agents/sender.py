@@ -365,7 +365,11 @@ class Sender:
                 f"{campaign_id}. Resuming deploy instead of recreating."
             )
         else:
-            instantly_campaign = await self.instantly.create_campaign(campaign.name)
+            instantly_campaign = await self.instantly.create_campaign(
+                campaign.name,
+                timezone=operator_timezone(self.config),
+                daily_limit=self.config.channels.email.max_daily_sends,
+            )
             if not instantly_campaign or not isinstance(instantly_campaign, dict):
                 logger.error(f"Sender: Failed to create Instantly campaign: {campaign.name}")
                 return
@@ -480,12 +484,15 @@ class Sender:
         leads = [
             {
                 "email": p.email.strip().lower(),
-                "first_name": p.first_name,
+                # A company inbox has no name; "there" keeps "Hi {{first_name}}," readable.
+                "first_name": p.first_name or ("there" if p.is_company_inbox else ""),
                 "last_name": p.last_name,
                 "company_name": p.company,
-                "variables": {
-                    "title": p.title,
-                    "personalization": p.personalization_notes,
+                "personalization": p.personalization_notes,
+                # Harvey's own merge tags, by the same names.
+                "custom_variables": {
+                    "company": p.company or "",
+                    "title": p.title or "",
                 },
             }
             for p in prospects

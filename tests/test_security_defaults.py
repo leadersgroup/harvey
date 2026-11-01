@@ -52,7 +52,8 @@ async def test_legacy_campaign_autopilot_is_still_available(state):
     campaign = Campaign(id="c", name="Draft",
                         sequence=[EmailStep(step=1, subject="a note", body="Would this help?")])
     await sender._deploy_campaign(campaign)
-    sender.instantly.create_campaign.assert_awaited_once_with("Draft")
+    sender.instantly.create_campaign.assert_awaited_once()
+    assert sender.instantly.create_campaign.await_args.args == ("Draft",)
 
 
 @pytest.mark.asyncio

@@ -440,6 +440,7 @@ async def heartbeat(stop_event: asyncio.Event | None = None):
                 # idling until the next heartbeat.
                 logger.info("Nothing to write this cycle; prospecting instead.")
                 outcomes.update(await _run_agents([("prospect", scout.run())]))
+                action = "prospect"     # what the cycle did, for the activity log
 
             # Phase 2: send — only after every reply-reading task this cycle
             # finished reading and handling replies (it returns True; a

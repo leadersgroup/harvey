@@ -204,6 +204,12 @@ class InstantlyClient:
         result = await self._request("GET", "/campaigns", params={"limit": limit})
         return self._extract_items(result)
 
+    async def set_daily_limit(self, campaign_id: str, daily_limit: int) -> dict | None:
+        """Set how many emails a campaign may send a day."""
+        result = await self._request(
+            "PATCH", f"/campaigns/{campaign_id}", {"daily_limit": daily_limit})
+        return result if isinstance(result, dict) else None
+
     async def activate_campaign(self, campaign_id: str) -> dict | None:
         """Start a campaign."""
         result = await self._request("POST", f"/campaigns/{campaign_id}/activate", {})
@@ -277,6 +283,23 @@ class InstantlyClient:
             if not isinstance(result, dict):
                 return None
         return result
+
+    async def delete_lead(self, email: str) -> int | None:
+        """Remove ``email`` from every campaign in the workspace, so nothing
+        more is sent to it. Returns how many leads went, or None on failure."""
+        email = (email or "").strip().lower()
+        result = await self._request("POST", "/leads/list", {"search": email, "limit": 100})
+        if result is None:
+            return None
+        deleted = 0
+        for lead in self._extract_items(result):
+            if not isinstance(lead, dict) or (lead.get("email") or "").lower() != email:
+                continue
+            # Instantly refuses a JSON request with an empty body.
+            if await self._request("DELETE", f"/leads/{lead['id']}", {}) is None:
+                return None
+            deleted += 1
+        return deleted
 
     # ── Replies / Emails ──
 

@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import json
 import subprocess
 import sys
 import textwrap
@@ -239,6 +240,16 @@ def cmd_status(args):
         rules_problem = await state.get_setting(EMAIL_RULES_PROBLEM_KEY)
         if rules_problem:
             print(f"  Writing:              STOPPED (writer.email_rules: {rules_problem})")
+        from harvey.state import COUNTRY_HELD_KEY
+        country_held = await state.get_setting(COUNTRY_HELD_KEY)
+        if country_held:
+            try:
+                held_companies = json.loads(country_held)
+            except ValueError:
+                held_companies = {}
+            if held_companies:
+                print(f"  Country unknown:      {sum(held_companies.values())} prospect(s) "
+                      f"not written to ({', '.join(list(held_companies)[:3])})")
         hold = await state.current_sends_held()
         if hold:
             from harvey.sending_mode import held_message

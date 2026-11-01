@@ -2125,6 +2125,27 @@ async def get_today():
                 "action": "Open the log", "tab": "controls",
             })
 
+        from harvey.state import COUNTRY_HELD_KEY
+        country_held = await state.get_setting(COUNTRY_HELD_KEY)
+        if country_held:
+            try:
+                held_companies = json.loads(country_held)
+            except ValueError:
+                held_companies = {}
+            if held_companies:
+                n = sum(held_companies.values())
+                names = ", ".join(list(held_companies)[:5])
+                items.append({
+                    "key": "country-held", "tone": "warn",
+                    "title": (f"{n} prospect{'s' if n != 1 else ''} not emailed: "
+                              "Harvey doesn't know their country"),
+                    "detail": (f"{names}. Cold email only goes to the countries in "
+                               "compliance.allowed_countries, and only once Harvey is sure "
+                               "of the country from the company's location. Add the "
+                               "company's city to its record and Harvey picks them up."),
+                    "action": "Open companies", "tab": "companies",
+                })
+
         hold = await state.current_sends_held()
         if hold:
             from harvey.sending_mode import held_message

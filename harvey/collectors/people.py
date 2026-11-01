@@ -52,6 +52,11 @@ software sports medicine fitness salon spa dental medical clinic insurance finan
 properties inc llc pllc ltd corp co
 coach pastor father mother judge mayor senator governor captain sergeant sheriff officer
 uncle aunt grandpa grandma mom dad memory memoriam late former
+firm firms overview profile profiles practice practices area areas law legal
+estate estates planning trust trusts probate wills directive directives advance
+elder litigation guardianship conservatorship deed deeds title tax taxes wealth
+advisor advisors adviser advisers advisory management planner planners retirement
+investment investments accounting bookkeeping payroll consultation consultations
 """.split())
 
 # Particles that sit lower-case inside a surname ("Van de Wal", "de la Cruz").
@@ -684,6 +689,15 @@ def find_people(pages: list[tuple[str, str]], domain: str, site_name: str = "") 
     people = [merged[k] for k in order]
     text = " ".join(" ".join(_sentences(html))[:200_000] for _, html in pages)
     people = [p for p in people if not _departed(p, text)]
+    # "Pryor Wynn" at pryorwynn.example is the firm's name, not a person in it.
+    # An owner whose surname is on the door (Mara Hollis at hollislaw.example) stays.
+    blob = _business_blob(domain, site_name)
+
+    def names_the_firm(p) -> bool:
+        words = re.findall(r"[a-z]+", (p.get("full_name") or
+                                       f"{p['first_name']} {p['last_name']}").lower())
+        return bool(words) and all(len(w) >= 3 and w in blob for w in words)
+    people = [p for p in people if not names_the_firm(p)]
     current_owner = any(p["source"] != "prose" and p["owner"] for p in people)
     if current_owner:
         people = [p for p in people

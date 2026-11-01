@@ -30,7 +30,12 @@ from harvey.collectors.discover import (
 
 logger = logging.getLogger("harvey.collectors.profile")
 
-TIMEOUT = httpx.Timeout(connect=8.0, read=12.0, write=8.0, pool=8.0)
+TIMEOUT = httpx.Timeout(connect=5.0, read=12.0, write=8.0, pool=8.0)
+# Sites read at once. Each site still gets one request at a time; only
+# different businesses are read side by side.
+CONCURRENT_SITES = 6
+# Guessed paths ("/team", "/about", ...) asked for together on one site.
+PATHS_AT_ONCE = 3
 USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -109,6 +114,9 @@ BOOKING_HINTS = (r"calendly\.com", r"acuityscheduling", r"schedulicity",
 AI_CRAWLERS = ("gptbot", "google-extended", "ccbot", "anthropic-ai", "claudebot",
                "perplexitybot", "bytespider")
 
+# httpx's words for a name DNS doesn't know (macOS, Linux, Windows).
+_NO_SUCH_HOST = re.compile(r"(?i)nodename nor servname|name or service not known|"
+                           r"no address associated|getaddrinfo failed|temporary failure in name")
 TEAM_PATHS = ("/team", "/about", "/about-us", "/our-team", "/staff",
               "/leadership", "/meet-the-team", "/company/team")
 CAREERS_PATHS = ("/careers", "/jobs", "/join-us", "/employment", "/hiring",
@@ -816,6 +824,8 @@ class ProfileCollector:
         # Hosts that answered with a bot challenge (SiteGround's 202,
         # Cloudflare's "Just a moment...") rather than a page.
         self.challenged: set[str] = set()
+        # Hosts DNS doesn't know: trying them again over http is pointless.
+        self.unresolvable: set[str] = set()
 
     def wants(self, code: str) -> bool:
         return code in self.confirmed
@@ -837,6 +847,9 @@ class ProfileCollector:
             resp = await self._client.get(url)
         except (httpx.HTTPError, ValueError) as e:
             logger.debug(f"fetch failed {url}: {e}")
+            if isinstance(e, httpx.ConnectError) and _NO_SUCH_HOST.search(str(e)):
+                self.__dict__.setdefault("unresolvable", set()).add(
+                    (urlparse(url).hostname or "").lower())
             return ""
         if resp.status_code in (200, 202, 403, 429, 503) and looks_like_challenge(
                 resp.text or "", resp.status_code):
@@ -860,6 +873,8 @@ class ProfileCollector:
             f"https://{domain}", f"https://www.{domain}",
             f"http://{domain}", f"http://www.{domain}",
         ):
+            if (urlparse(base).hostname or "").lower() in getattr(self, "unresolvable", ()):
+                continue    # no such host: http won't find it either
             html = await self._get(base)
             if html:
                 return base, html
@@ -868,12 +883,18 @@ class ProfileCollector:
         return "", ""
 
     async def _first_present(self, site: str, paths) -> tuple[str, str]:
-        """Return (url, html) for the first path that returns content."""
-        for path in paths:
-            url = f"{site}{path}"
-            html = await self._get(url)
-            if html and len(html) > 500:
-                return url, html
+        """Return (url, html) for the first path that returns content.
+
+        Asked for a few at a time, so a site where none exist costs one
+        round of waiting per group rather than one per path; the earliest
+        path in the list still wins."""
+        paths = list(paths)
+        for start in range(0, len(paths), PATHS_AT_ONCE):
+            group = [f"{site}{path}" for path in paths[start:start + PATHS_AT_ONCE]]
+            pages = await asyncio.gather(*(self._get(url) for url in group))
+            for url, html in zip(group, pages):
+                if html and len(html) > 500:
+                    return url, html
         return "", ""
 
     async def _careers_page(self, site: str, home: str, domain: str) -> tuple[str, str]:
@@ -1290,25 +1311,34 @@ class ProfileCollector:
         long run that dies must not take them with it.
         """
         total = 0
-        for company in companies:
+        sites = asyncio.Semaphore(CONCURRENT_SITES)
+        writes = asyncio.Lock()     # one database write at a time
+
+        async def one(company):
+            nonlocal total
             domain = (company.get("domain") or "").strip()
             if not domain:
-                continue
-            try:
-                obs = await self.profile_company(company["id"], domain)
-            except Exception as e:
-                logger.warning(f"profile failed for {domain}: {e}")
-                await self._mark_checked(company["id"])
-                continue
-            # Marked regardless of outcome — an unreachable site still counts
-            # as checked, or the same handful gets retried every cycle
-            # forever instead of rotating through the rest of the backlog.
-            await self._mark_checked(company["id"])
-            await self._improve_name(company, domain)
-            if obs:
-                total += await self.state.add_observations(obs, run_id=run_id)
-                logger.info(f"profile: {domain} → {len(obs)} observation(s)")
-            await asyncio.sleep(random.uniform(0.4, 1.2))
+                return
+            async with sites:
+                try:
+                    obs = await self.profile_company(company["id"], domain)
+                except Exception as e:
+                    logger.warning(f"profile failed for {domain}: {e}")
+                    obs = None
+                async with writes:
+                    # Marked regardless of outcome — an unreachable site still
+                    # counts as checked, or the same handful gets retried every
+                    # cycle forever instead of rotating through the backlog.
+                    await self._mark_checked(company["id"])
+                    if obs is None:
+                        return
+                    await self._improve_name(company, domain)
+                    if obs:
+                        total += await self.state.add_observations(obs, run_id=run_id)
+                        logger.info(f"profile: {domain} → {len(obs)} observation(s)")
+                await asyncio.sleep(random.uniform(0.2, 0.6))
+
+        await asyncio.gather(*(one(c) for c in companies))
         return total
 
 

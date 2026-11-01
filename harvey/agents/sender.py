@@ -29,9 +29,8 @@ from harvey.integrations.mail_provider import NATIVE_PROVIDERS, get_mail_provide
 from harvey.integrations.precleared import PreclearedClient, clear_hold, record_hold
 from harvey.sending_mode import sync_sending_mode
 from harvey.state import (
-    AUTOPILOT_OFF_REASON, COLLEAGUE_REPLIED, COUNTRY_UNKNOWN, HAND_SENT_REASON,
-    HELD_FOR_REVIEW, MANUAL_SEND_KEY, MAYBE_SENT_PREFIX, OUTSIDE_COUNTRIES, RECHECK_PREFIX,
-    StateManager,
+    AUTOPILOT_OFF_REASON, COLLEAGUE_REPLIED, HAND_SENT_REASON, HELD_FOR_REVIEW,
+    MANUAL_SEND_KEY, MAYBE_SENT_PREFIX, RECHECK_PREFIX, StateManager, country_hold,
 )
 
 # A follow-up waits at least this long after the email it follows went out,
@@ -60,6 +59,24 @@ CHECK_SECONDS_PER_CYCLE = 90
 STOP_STATUSES = {"replied", "opted_out", "lost", "meeting", "closed"}
 
 KILL_SWITCH_KEY = "sending_paused"
+# A legal form at the end of a company name: nobody says "PLLC" in an email.
+LEGAL_SUFFIX_RE = re.compile(
+    r"(?:,?\s+(?:P\.?L\.?L\.?C|L\.?L\.?P|L\.?L\.?C|P\.?L\.?C|P\.?C|P\.?A|Inc|Ltd|"
+    r"Corp(?:oration)?|Co|Chartered|Chtd|LPA)\.?)+$", re.I)
+
+
+def casual_company(name: str) -> str:
+    """The company as a person writes it: "Hollis & Kerr, PLLC" ->
+    "Hollis & Kerr", "Brightwater Law PLC" -> "Brightwater Law"."""
+    name = (name or "").strip()
+    short = LEGAL_SUFFIX_RE.sub("", name).strip(" ,")
+    return short or name
+
+
+# Instantly campaign status 1 is "active"; the share last set on each
+# campaign is kept so it's only patched when it changes.
+INSTANTLY_ACTIVE = 1
+DAILY_SHARE_KEY = "instantly_daily_share:"
 BOUNCE_COUNT_KEY = "bounce_count"
 
 EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$")
@@ -272,6 +289,7 @@ class Sender:
         draft_campaigns = await self.state.get_campaigns_by_status("draft")
         if not draft_campaigns:
             logger.info("Sender: No draft campaigns to deploy.")
+            await self._share_daily_limit()
             return
 
         # Enforce daily send limit
@@ -287,6 +305,48 @@ class Sender:
                 await self._deploy_campaign(campaign)
             except Exception as e:
                 logger.error(f"Sender: Failed to deploy campaign {campaign.name}: {e}")
+        await self._share_daily_limit()
+
+    async def _live_instantly_ids(self) -> list[str] | None:
+        """Instantly ids of Harvey's campaigns that are still sending there
+        (a finished or paused campaign sends nothing), or None if unknown."""
+        ours = [c.instantly_campaign_id
+                for c in await self.state.get_campaigns_by_status("active")
+                if c.instantly_campaign_id]
+        if not ours:
+            return []
+        listed = await self.instantly.list_campaigns()
+        if not listed:
+            return None
+        live = {c.get("id") for c in listed
+                if isinstance(c, dict) and c.get("status") == INSTANTLY_ACTIVE}
+        return [i for i in ours if i in live]
+
+    async def _share_daily_limit(self, extra: int = 0) -> int:
+        """Split max_daily_sends across Harvey's live Instantly campaigns.
+
+        Instantly's daily_limit is per campaign, so giving each one the whole
+        limit lets five campaigns send five times it. ``extra`` counts
+        campaigns about to be created. Returns one new campaign's share."""
+        total = self.config.channels.email.max_daily_sends
+        live = await self._live_instantly_ids()
+        if live is None:
+            logger.warning("Sender: couldn't list Instantly campaigns to share the daily limit.")
+            return max(1, total // (extra + 1))
+        count = len(live) + extra
+        share = max(1, total // max(count, 1))
+        if share * count > total:
+            logger.warning(
+                f"Sender: {count} live Instantly campaigns at 1 email a day each "
+                f"is more than max_daily_sends ({total}).")
+        for campaign_id in live:
+            key = DAILY_SHARE_KEY + campaign_id
+            if await self.state.get_setting(key) == str(share):
+                continue
+            if await self.instantly.set_daily_limit(campaign_id, share) is not None:
+                await self.state.set_setting(key, str(share))
+                logger.info(f"Sender: Instantly campaign {campaign_id} may send {share} a day.")
+        return share
 
     def _validate_sequence(self, campaign) -> bool:
         """Never deploy a broken or empty sequence."""
@@ -309,19 +369,11 @@ class Sender:
 
     async def _outside_countries(self, prospect) -> tuple[bool, str] | None:
         """Why compliance.allowed_countries keeps cold email from this
-        prospect, as (known_elsewhere, reason), or None to send.
-
-        Only a country Harvey is sure of counts: a guess could put someone
-        abroad in the list, so an unknown country is held too."""
+        prospect, as (known_elsewhere, reason), or None to send."""
         allowed = compliance_of(self.config).allowed_countries
         if not allowed:
             return None
-        country = await self._recipient_country(prospect)
-        if country in allowed:
-            return None
-        if country:
-            return True, f"{OUTSIDE_COUNTRIES} ({country}; sending only to {', '.join(allowed)})"
-        return False, f"{COUNTRY_UNKNOWN} (sending only to {', '.join(allowed)})"
+        return country_hold(await self._recipient_country(prospect), allowed)
 
     def _reviewed_leads(self, prospects: list) -> list:
         """The prospects whose merge fields pass the autopilot review."""
@@ -385,7 +437,7 @@ class Sender:
             instantly_campaign = await self.instantly.create_campaign(
                 campaign.name,
                 timezone=operator_timezone(self.config),
-                daily_limit=self.config.channels.email.max_daily_sends,
+                daily_limit=await self._share_daily_limit(extra=1),
             )
             if not instantly_campaign or not isinstance(instantly_campaign, dict):
                 logger.error(f"Sender: Failed to create Instantly campaign: {campaign.name}")
@@ -511,7 +563,7 @@ class Sender:
                 "personalization": p.personalization_notes,
                 # Harvey's own merge tags, by the same names.
                 "custom_variables": {
-                    "company": p.company or "",
+                    "company": casual_company(p.company),
                     "title": p.title or "",
                 },
             }
@@ -606,12 +658,16 @@ class Sender:
             # A company inbox has no name; "there" keeps "Hi {{first_name}}," readable.
             "first_name": prospect.first_name or ("there" if prospect.is_company_inbox else ""),
             "last_name": prospect.last_name,
-            "company": prospect.company,
+            "company": casual_company(prospect.company),
             "title": prospect.title,
             "personalization": prospect.personalization_notes,
         }
+        if "sendingAccountName" in text:
+            # Instantly's tag for the sending mailbox's name, used by email
+            # rules written for Instantly: here the sender is the persona.
+            replacements["sendingAccountName"] = self.config.persona.name
         # "{{company}}'s" for "Parkes Builders" should read "Builders'".
-        company = prospect.company or ""
+        company = casual_company(prospect.company)
         if company.endswith(("s", "S")):
             for tag in ("{{company}}", "{{ company }}"):
                 text = text.replace(tag + "'s", company + "'")

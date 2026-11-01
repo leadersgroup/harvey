@@ -17,6 +17,9 @@ def _step(client):
 def _no_key(monkeypatch):
     monkeypatch.delenv("TRULYINBOX_API_KEY", raising=False)
     monkeypatch.delenv("TRULYINBOX_WORKSPACE_ID", raising=False)
+    # The step is required for Harvey's own providers; don't let the
+    # developer's real config (say, provider: instantly) decide.
+    monkeypatch.setattr(dash, "_current_provider", lambda: "gmail")
 
 
 def test_the_step_starts_open_with_the_link(client):

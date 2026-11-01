@@ -56,6 +56,21 @@ COLLEAGUE_REPLIED = "a colleague replied"
 # country is never cold-emailed; one whose country isn't known waits for you.
 OUTSIDE_COUNTRIES = "outside the countries you send to"
 COUNTRY_UNKNOWN = "country not known"
+# Setting the Writer keeps for Today and `harvey status`: JSON of the
+# companies whose prospects it held for an unknown country.
+COUNTRY_HELD_KEY = "country_held"
+
+
+def country_hold(country: str, allowed) -> tuple[bool, str] | None:
+    """Why compliance.allowed_countries keeps cold email from a prospect in
+    ``country`` (their country when Harvey is sure of it, else ""), as
+    (known_elsewhere, reason), or None to send. Unknown is held too: a
+    guess could put someone abroad in the list."""
+    if not allowed or country in allowed:
+        return None
+    if country:
+        return True, f"{OUTSIDE_COUNTRIES} ({country}; sending only to {', '.join(allowed)})"
+    return False, f"{COUNTRY_UNKNOWN} (sending only to {', '.join(allowed)})"
 # Setting set (to their name) when someone's reply stops their company.
 # An out-of-office or a "wrong person" doesn't set it.
 COMPANY_STOP_KEY = "company_stop:"
@@ -1412,6 +1427,22 @@ class StateManager:
             )
             await db.commit()
             return cursor.rowcount
+
+    async def colleague_in_sequence(self, prospect_id: str, days: int) -> str | None:
+        """The name of a colleague at this prospect's company who was queued
+        or cold-emailed in the last ``days`` days, or None. One person per
+        company at a time: two partners at a small firm getting the same
+        email the same week compare notes."""
+        async with self._connect() as db:
+            async with db.execute(
+                "SELECT trim(c.first_name || ' ' || c.last_name) FROM prospects p, prospects c "
+                f"WHERE p.id = ? AND {_colleagues('p', 'c')} "
+                "AND c.status IN ('queued', 'contacted') "
+                "AND replace(c.updated_at, 'T', ' ') >= datetime('now', ?) LIMIT 1",
+                (prospect_id, f"-{int(days)} days"),
+            ) as cursor:
+                row = await cursor.fetchone()
+        return (row[0] or "a colleague") if row else None
 
     async def colleague_who_replied(self, prospect_id: str) -> str | None:
         """The name of someone at this prospect's company who has replied,

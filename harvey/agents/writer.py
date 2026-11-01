@@ -19,7 +19,8 @@ from harvey.config import EmailRulesError, HarveyConfig, compliance_of, load_ema
 from harvey.humanize import humanize, humanizer_enabled
 from harvey.integrations.mail_provider import NATIVE_PROVIDERS
 from harvey.models.campaign import Campaign, EmailStep
-from harvey.state import WRITABLE_EMAIL_STATUSES, StateManager
+from harvey.send_window import recipient_country
+from harvey.state import COUNTRY_HELD_KEY, WRITABLE_EMAIL_STATUSES, StateManager, country_hold
 from harvey.sending_mode import sync_sending_mode
 from harvey.startups import startup_facts
 from harvey.untrusted import UNTRUSTED_RULE, fence
@@ -53,6 +54,9 @@ SEQUENCE_STYLE = """- Never be pushy or salesy. Be consultative and value-driven
 - Subject lines: lowercase, 2-5 words."""
 # Why the Writer stopped: Today and `harvey status` show it.
 EMAIL_RULES_PROBLEM_KEY = "email_rules_problem"
+# A second person at a company waits this long after a colleague was
+# emailed: the sequence (about a week) has finished and gone unanswered.
+COLLEAGUE_GAP_DAYS = 21
 BUILT_IN_FOOTER = "- No postal address, unsubscribe or opt-out line: Harvey adds them when it sends."
 
 
@@ -116,6 +120,60 @@ class Writer:
     def is_native(self) -> bool:
         return self.config.channels.email.provider in NATIVE_PROVIDERS
 
+    async def _one_per_company(self, prospects: list) -> list:
+        """At most one new cold contact per company, and none while a
+        colleague's sequence is still running (COLLEAGUE_GAP_DAYS). A named
+        person beats the company inbox, a verified address a catch-all."""
+        def rank(p):
+            return (p.is_company_inbox, (p.email_status or "") != "verified")
+        kept, companies = [], set()
+        for p in sorted(prospects, key=rank):
+            company = p.company_id or (p.email or "").rsplit("@", 1)[-1].lower()
+            if company in companies:
+                continue
+            busy = await self.state.colleague_in_sequence(p.id, COLLEAGUE_GAP_DAYS)
+            if busy:
+                logger.debug(f"Writer: {p.email} waits; {busy} at {p.company} is mid-sequence.")
+                continue
+            companies.add(company)
+            kept.append(p)
+        return kept
+
+    async def _in_allowed_countries(self, prospects: list) -> list:
+        """The prospects compliance.allowed_countries lets Harvey write to.
+
+        Someone known to be elsewhere is never written for. An unknown
+        country is skipped on Instantly, where nothing can approve them one
+        by one; on Gmail/SMTP it's drafted and waits in the Outbox for you.
+        The companies held for an unknown country are kept for Today."""
+        allowed = compliance_of(self.config).allowed_countries
+        if not allowed:
+            if await self.state.get_setting(COUNTRY_HELD_KEY):
+                await self.state.delete_setting(COUNTRY_HELD_KEY)
+            return prospects
+        kept, unknown = [], {}
+        for p in prospects:
+            try:
+                country = await recipient_country(self.state, p)
+            except Exception as e:
+                logger.warning(f"Writer: couldn't work out the country for {p.email}: {e}")
+                country = ""
+            hold = country_hold(country, allowed)
+            if hold is None:
+                kept.append(p)
+            elif not hold[0]:
+                unknown.setdefault(p.company or p.email, 0)
+                unknown[p.company or p.email] += 1
+                if self.is_native:
+                    kept.append(p)
+        if unknown:
+            logger.info(f"Writer: country not known for {', '.join(unknown)}; "
+                        f"cold email goes only to {', '.join(allowed)}.")
+            await self.state.set_setting(COUNTRY_HELD_KEY, json.dumps(unknown))
+        elif await self.state.get_setting(COUNTRY_HELD_KEY):
+            await self.state.delete_setting(COUNTRY_HELD_KEY)
+        return kept
+
     async def run(self):
         """Create email campaigns for prospects that need outreach."""
         logger.info("Writer: Crafting email campaigns...")
@@ -153,6 +211,8 @@ class Writer:
             p for p in prospects_with_email
             if not await self.state.colleague_who_replied(p.id)
         ]
+        prospects_with_email = await self._in_allowed_countries(prospects_with_email)
+        prospects_with_email = await self._one_per_company(prospects_with_email)
         if not prospects_with_email:
             logger.info(
                 "Writer: No prospects with deliverable (verified/risky) emails yet."

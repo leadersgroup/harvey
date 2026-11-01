@@ -128,6 +128,92 @@ _SENIOR_KEYWORDS = (
 )
 
 
+US_STATES = frozenset(
+    "AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO "
+    "MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY".split())
+# "Dallas, TX 75201": a US street address's last line.
+US_ADDRESS_RE = re.compile(r"\b([A-Z][A-Za-z.' -]{1,30}),\s*([A-Z]{2})\s+\d{5}(?:-\d{4})?\b")
+
+
+# A careers page's address, after any redirect.
+CAREERS_URL_RE = re.compile(r"(?i)/(?:careers?|jobs?|join(?:-us)?|work-with-us|employment|"
+                            r"opportunities|hiring|openings)\b")
+# Words a page listing openings uses.
+HIRING_PAGE_RE = re.compile(r"(?i)\b(?:apply|application|open (?:positions?|roles?)|"
+                            r"current openings|job openings|we(?:'|’)?re hiring|now hiring|"
+                            r"join our team|employment opportunit|resume|full[- ]time|part[- ]time)\b")
+# A word that makes a line a job title.
+ROLE_WORD_RE = re.compile(
+    r"(?i)\b(?:attorneys?|lawyers?|associates?|paralegals?|assistants?|secretar(?:y|ies)|"
+    r"clerks?|receptionists?|coordinators?|managers?|directors?|specialists?|analysts?|"
+    r"advisors?|advisers?|planners?|agents?|representatives?|officers?|administrators?|"
+    r"accountants?|bookkeepers?|engineers?|developers?|designers?|technicians?|"
+    r"consultants?|counsel|interns?|fellows?|staff|producers?|underwriters?|"
+    r"executives?|leads?|heads?|vp|president)\b")
+
+
+def looks_like_brand(text: str) -> bool:
+    """An og:site_name that is a business name, not a slug ("hollisandkerr"),
+    a URL or a page label ("Home")."""
+    text = (text or "").strip()
+    if not 2 <= len(text) <= 80 or "." in text.split()[-1] and " " not in text:
+        return False
+    if text.lower() in ("home", "homepage", "welcome", "blog", "index"):
+        return False
+    return any(ch.isupper() for ch in text)
+
+
+def published_location(soup) -> str:
+    """The location a company publishes on its own page ("Dallas, TX", or
+    "London, GB" from schema.org), or "" when it doesn't say.
+
+    schema.org addresses come first, as the site's own structured claim;
+    then a US address line in the visible text. Nothing is inferred from
+    where a search was aimed: a search for Dallas can return anyone."""
+    for tag in soup.find_all("script", attrs={"type": "application/ld+json"}):
+        try:
+            data = json.loads(tag.string or "")
+        except (ValueError, TypeError):
+            continue
+        for address in _postal_addresses(data):
+            city = str(address.get("addressLocality") or "").strip()
+            region = str(address.get("addressRegion") or "").strip()
+            country = address.get("addressCountry") or ""
+            if isinstance(country, dict):
+                country = country.get("name") or ""
+            country = str(country).strip()
+            if country.upper() in ("US", "USA", "UNITED STATES", "UNITED STATES OF AMERICA"):
+                country = ""
+                if region.upper() not in US_STATES:
+                    region = region or "USA"
+            parts = [p for p in (city, region, country) if p]
+            if city and len(parts) > 1:
+                return ", ".join(parts)[:120]
+    text = soup.get_text(" ", strip=True)
+    for match in US_ADDRESS_RE.finditer(text):
+        city, state = match.group(1).strip(), match.group(2)
+        if state in US_STATES:
+            # "Suite 200 Dallas" -> "Dallas": the city is the last words
+            # before the comma, after any street part.
+            city = re.split(r"\d|\b(?:Suite|Ste|St|Ave|Rd|Blvd|Dr|Floor|Fl)\b\.?", city)[-1].strip()
+            if city:
+                return f"{city}, {state}"
+    return ""
+
+
+def _postal_addresses(data):
+    """Every PostalAddress in a schema.org JSON-LD blob."""
+    if isinstance(data, list):
+        for item in data:
+            yield from _postal_addresses(item)
+    elif isinstance(data, dict):
+        if data.get("@type") == "PostalAddress" or "addressLocality" in data:
+            yield data
+        for value in data.values():
+            if isinstance(value, (dict, list)):
+                yield from _postal_addresses(value)
+
+
 class Scout:
     def __init__(
         self,
@@ -916,6 +1002,7 @@ class Scout:
                 website=company.get("website", f"https://{domain}"),
                 description=company.get("description", ""),
                 industry=company.get("industry", default_industry),
+                location=company.get("location", ""),
                 source=company.get("source", "web_search"),
                 source_url=company.get("source_url", ""),
             )
@@ -1395,10 +1482,14 @@ Respond ONLY with the JSON array."""
                 info["description"] = self._attr_str(meta_desc.get("content")).strip()[:500]
 
             og_name = soup.find("meta", attrs={"property": "og:site_name"})
-            if og_name and og_name.get("content"):
-                og = self._attr_str(og_name.get("content")).strip()
-                if og:
-                    info["name"] = og[:120]
+            og = self._attr_str(og_name.get("content")).strip() if og_name else ""
+            if looks_like_brand(og):
+                # The name the site declares for itself ("Quillmont LLP").
+                info["name"] = og[:120]
+            elif named := site_name_from_html(resp.text, domain):
+                # The title segment the domain backs up: "… | Harbor Oak", not
+                # the keyword in front ("Springfield Financial Advisor").
+                info["name"] = named[:120]
 
             if not info["description"]:
                 og_desc = soup.find("meta", attrs={"property": "og:description"})
@@ -1406,6 +1497,12 @@ Respond ONLY with the JSON array."""
                     info["description"] = self._attr_str(og_desc.get("content")).strip()[:500]
         except Exception as e:
             logger.debug(f"Failed to parse company info for {domain}: {e}")
+        try:
+            # Where they are, from their own page: it decides the send
+            # window and compliance.allowed_countries.
+            info["location"] = published_location(soup)
+        except Exception as e:
+            logger.debug(f"Failed to read a location for {domain}: {e}")
 
         return info
 
@@ -1956,7 +2053,11 @@ Respond ONLY with the JSON array."""
 
         signals: list[dict] = []
         try:
-            hiring_roles = await self._scrape_hiring_signals(domain)
+            # Only a signal you confirmed is collected: with HIRING_ROLE
+            # rejected or proposed, no careers pages are fetched at all.
+            confirmed = await self.state.confirmed_signal_codes()
+            hiring_roles = (await self._scrape_hiring_signals(domain)
+                            if "HIRING_ROLE" in confirmed else [])
         except Exception as e:
             logger.debug(f"Hiring scan failed for {domain}: {e}")
             hiring_roles = []
@@ -1998,8 +2099,17 @@ Respond ONLY with the JSON array."""
             )
             if resp is None:
                 continue
+            # Many small sites answer any path with the homepage: a page
+            # that redirected away from careers, or never talks about jobs,
+            # isn't a careers page, and its menu isn't a list of openings.
+            if not CAREERS_URL_RE.search(str(getattr(resp, "url", "") or path)):
+                continue
             soup = self._safe_soup(resp.text)
             if soup is None:
+                continue
+            for chrome in soup.select("nav, header, footer, [role=navigation]"):
+                chrome.decompose()
+            if not HIRING_PAGE_RE.search(soup.get_text(" ")):
                 continue
 
             roles: list[str] = []
@@ -2015,6 +2125,8 @@ Respond ONLY with the JSON array."""
                 low = text.lower()
                 if not any(k in low for k in keywords):
                     continue
+                if not ROLE_WORD_RE.search(text):
+                    continue    # "Estate Planning" is a practice area, not a job
                 key = low[:60]
                 if key in seen:
                     continue

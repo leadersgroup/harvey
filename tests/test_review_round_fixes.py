@@ -338,3 +338,10 @@ def test_directories_news_and_associations_are_junk(domain):
 def test_firms_with_lawyers_in_the_domain_are_not(domain):
     from harvey.collectors.discover import is_junk
     assert not is_junk(domain)
+
+
+def test_a_tagline_in_og_site_name_is_dropped():
+    from bs4 import BeautifulSoup  # noqa: F401
+    from harvey.collectors.discover import business_name
+    assert business_name("Pryor Law Firm | Boutique Law Firm Serving NY, NJ & AZ",
+                         "pryorlawfirm.example") == "Pryor Law Firm"

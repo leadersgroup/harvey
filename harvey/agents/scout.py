@@ -38,7 +38,7 @@ from bs4 import BeautifulSoup
 
 from harvey.brain import Brain
 from harvey.collectors import people as people_mod
-from harvey.collectors.discover import site_name_from_html
+from harvey.collectors.discover import _TITLE_SEPARATORS, business_name, site_name_from_html
 from harvey.collectors.profile import _reads_like_title, looks_like_challenge
 from harvey.config import HarveyConfig, EnvConfig
 from harvey.integrations.email_finder import (
@@ -1484,8 +1484,11 @@ Respond ONLY with the JSON array."""
             og_name = soup.find("meta", attrs={"property": "og:site_name"})
             og = self._attr_str(og_name.get("content")).strip() if og_name else ""
             if looks_like_brand(og):
-                # The name the site declares for itself ("Quillmont LLP").
-                info["name"] = og[:120]
+                # The name the site declares for itself ("Quillmont LLP"); a
+                # tagline after a separator ("… | Boutique Law Firm Serving
+                # NY") goes, keeping the part the domain backs up.
+                info["name"] = (business_name(og, domain) if _TITLE_SEPARATORS.search(og)
+                                else og)[:120]
             elif named := site_name_from_html(resp.text, domain):
                 # The title segment the domain backs up: "… | Harbor Oak", not
                 # the keyword in front ("Springfield Financial Advisor").

@@ -38,7 +38,9 @@ from bs4 import BeautifulSoup
 
 from harvey.brain import Brain
 from harvey.collectors import people as people_mod
-from harvey.collectors.discover import brand_name, looks_like_brand, site_name_from_html  # noqa: F401
+from harvey.collectors.discover import (  # noqa: F401
+    brand_name, looks_like_brand, looks_like_keyword, name_from_domain, site_name_from_html,
+)
 from harvey.collectors.profile import _reads_like_title, looks_like_challenge
 from harvey.config import HarveyConfig, EnvConfig
 from harvey.integrations.email_finder import (
@@ -760,10 +762,12 @@ class Scout:
             if not domain:
                 continue
 
+            name = await self._better_name(company["id"], domain,
+                                           company.get("name") or self._domain_to_name(domain))
             contacts = await self._contacts_from_company(
                 company_id=company["id"],
                 domain=domain,
-                company_name=company.get("name") or self._domain_to_name(domain),
+                company_name=name,
                 industry=company.get("industry") or default_industry,
                 source="known_company_backfill",
             )
@@ -1383,6 +1387,26 @@ Respond ONLY with the JSON array."""
         return max(1, min(100, score))
 
     # ── Shared utilities ──
+
+    async def _better_name(self, company_id: str, domain: str, name: str) -> str:
+        """A stored name squashed from the domain ("Lgbs") or a search keyword
+        ("Austin Tax Attorney") becomes the one the homepage gives itself,
+        before it reaches anyone's {{company}}. The page is read once per
+        cycle and reused for the people on it."""
+        label = domain.split(".")[0].replace("-", "").lower()
+        if not (name == name_from_domain(domain) or looks_like_keyword(name)
+                or name.replace(" ", "").lower() == label):
+            return name
+        try:
+            site = await self._read_site(domain)
+            better = brand_name(site["pages"][0][1], domain) if site["pages"] else ""
+            if better and better != name:
+                await self.state.rename_company(company_id, better)
+                logger.info(f"Scout: {domain} named '{better}' (was '{name}')")
+                return better
+        except Exception as e:
+            logger.debug(f"Renaming {domain} failed: {e}")
+        return name
 
     async def _ensure_company(
         self,

@@ -474,3 +474,22 @@ def test_brand_name_prefers_the_declared_name_over_a_keyword_title():
     assert brand_name(html, "springfieldtax.example") == "Brightwater Law PLC"
     assert brand_name("<title>Springfield Tax Attorney | Pryor Tax Law</title>",
                       "pryortaxlaw.example") == "Pryor Tax Law"
+
+
+@pytest.mark.asyncio
+async def test_backfill_renames_a_squashed_name_from_the_homepage(state):  # noqa: F811
+    from harvey.agents.scout import Scout
+    from harvey.models.company import Company
+    cid = await state.add_company(Company(name="Pryorwynn", domain="pryorwynn.example"))
+    scout = Scout.__new__(Scout)
+    scout.state = state
+
+    async def read_site(domain):
+        return {"pages": [("https://pryorwynn.example/",
+                           '<meta property="og:site_name" content="Pryor Wynn LLP">')]}
+    scout._read_site = read_site
+    assert await scout._better_name(cid, "pryorwynn.example", "Pryorwynn") == "Pryor Wynn LLP"
+    assert (await state.get_company_by_domain("pryorwynn.example")).name == "Pryor Wynn LLP"
+    # A real name is left alone, without even reading the site.
+    scout._read_site = None
+    assert await scout._better_name(cid, "pryorwynn.example", "Pryor Wynn LLP") == "Pryor Wynn LLP"

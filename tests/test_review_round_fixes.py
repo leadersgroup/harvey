@@ -302,3 +302,22 @@ def test_request_urls_with_api_keys_are_not_logged():
     import logging
     import harvey.main  # noqa: F401  (configures logging)
     assert logging.getLogger("httpx").getEffectiveLevel() >= logging.WARNING
+
+
+@pytest.mark.asyncio
+async def test_a_writer_with_everyone_held_back_says_so(state):  # noqa: F811
+    """The heartbeat prospects instead when this comes back, rather than
+    choosing to write every cycle with nothing it may write."""
+    import aiosqlite
+    from types import SimpleNamespace
+    from harvey.agents.writer import NOTHING_TO_WRITE, Writer
+    from harvey.models.company import Company
+    cid = await state.add_company(Company(name="Acme", domain="acme.example"))
+    await seed_prospect(state, email="ann@acme.example", status="contacted")
+    await seed_prospect(state, email="bo@acme.example")
+    async with aiosqlite.connect(state.db_path) as db:
+        await db.execute("UPDATE prospects SET company_id = ?", (cid,))
+        await db.commit()
+    brain = SimpleNamespace(load_skills_for_agent=lambda agent: "")
+    writer = Writer(brain=brain, state=state, config=_cfg(provider="instantly"))
+    assert await writer.run() == NOTHING_TO_WRITE

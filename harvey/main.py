@@ -18,6 +18,7 @@ from harvey.integrations.mail_provider import NATIVE_PROVIDERS
 from harvey.pidfile import (
     LOCK_FILE, hold_loop_lock, read_pid, release_loop_lock, remove_pid_file, write_pid_file,
 )
+from harvey.agents.writer import NOTHING_TO_WRITE
 from harvey.pipeline import run_profile_stage
 from harvey.state import StateManager
 
@@ -433,6 +434,12 @@ async def heartbeat(stop_event: asyncio.Event | None = None):
                 tasks.append(("profile", run_profile_stage(state, limit=25, config=config)))
 
             outcomes = await _run_agents(tasks)
+            if action == "write_campaign" and outcomes.get("write_campaign") == NOTHING_TO_WRITE:
+                # The decision counts prospects the Writer then holds back
+                # (one per company, an unknown country): find more instead of
+                # idling until the next heartbeat.
+                logger.info("Nothing to write this cycle; prospecting instead.")
+                outcomes.update(await _run_agents([("prospect", scout.run())]))
 
             # Phase 2: send — only after every reply-reading task this cycle
             # finished reading and handling replies (it returns True; a

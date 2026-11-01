@@ -57,6 +57,9 @@ EMAIL_RULES_PROBLEM_KEY = "email_rules_problem"
 # A second person at a company waits this long after a colleague was
 # emailed: the sequence (about a week) has finished and gone unanswered.
 COLLEAGUE_GAP_DAYS = 21
+# What run() returns when every 'new' prospect is held back: the heartbeat
+# then prospects in the same cycle instead of choosing to write forever.
+NOTHING_TO_WRITE = "nothing_to_write"
 # On Instantly, new prospects join the live campaign for their group while
 # it is younger than this, rather than each batch getting its own.
 JOIN_CAMPAIGN_DAYS = 60
@@ -255,9 +258,10 @@ class Writer:
         prospects_with_email = await self._one_per_company(prospects_with_email)
         if not prospects_with_email:
             logger.info(
-                "Writer: No prospects with deliverable (verified/risky) emails yet."
+                "Writer: nothing to write yet: no deliverable email, or each one waits "
+                "(a colleague mid-sequence, or a country not known)."
             )
-            return
+            return NOTHING_TO_WRITE
 
         # Batch prospects into campaign groups (by industry/title for relevance)
         batches = self._group_prospects(prospects_with_email)

@@ -52,6 +52,10 @@ SENDS_HELD_KEY = "sends_held"
 # Outbox error on a sequence email cancelled because someone else at the
 # company replied: one answer from a company stops the cold email to all of it.
 COLLEAGUE_REPLIED = "a colleague replied"
+# Outbox reasons from compliance.allowed_countries: a prospect in another
+# country is never cold-emailed; one whose country isn't known waits for you.
+OUTSIDE_COUNTRIES = "outside the countries you send to"
+COUNTRY_UNKNOWN = "country not known"
 # Setting set (to their name) when someone's reply stops their company.
 # An out-of-office or a "wrong person" doesn't set it.
 COMPANY_STOP_KEY = "company_stop:"

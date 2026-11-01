@@ -412,6 +412,24 @@ class ComplianceConfig(BaseModel):
     # send time, so it holds for an email a human already approved, and for
     # replies as well as cold mail — "never contact" means never.
     do_not_contact: list[str] = []
+    # The only countries cold email goes to, as two-letter codes (["US"]).
+    # Empty sends anywhere. When set, a prospect gets cold email only once
+    # Harvey is sure of their country from the company's location: anyone
+    # elsewhere is never emailed, and anyone it isn't sure about waits for
+    # you. Replies to people who wrote in aren't affected.
+    allowed_countries: list[str] = []
+
+    @field_validator("allowed_countries", mode="before")
+    @classmethod
+    def _clean_allowed_countries(cls, v):
+        if v is None:
+            return []
+        if isinstance(v, str):
+            v = [v]
+        if not isinstance(v, (list, tuple)):
+            raise ValueError('must be a list of two-letter country codes, e.g. ["US"]')
+        codes = [normalize_prospect_country(item) for item in v]
+        return list(dict.fromkeys(c for c in codes if c))
 
     @field_validator("postal_address", "opt_out_line", mode="before")
     @classmethod

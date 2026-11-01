@@ -29,8 +29,9 @@ from harvey.integrations.mail_provider import NATIVE_PROVIDERS, get_mail_provide
 from harvey.integrations.precleared import PreclearedClient, clear_hold, record_hold
 from harvey.sending_mode import sync_sending_mode
 from harvey.state import (
-    AUTOPILOT_OFF_REASON, COLLEAGUE_REPLIED, HAND_SENT_REASON, HELD_FOR_REVIEW,
-    MANUAL_SEND_KEY, MAYBE_SENT_PREFIX, RECHECK_PREFIX, StateManager,
+    AUTOPILOT_OFF_REASON, COLLEAGUE_REPLIED, COUNTRY_UNKNOWN, HAND_SENT_REASON,
+    HELD_FOR_REVIEW, MANUAL_SEND_KEY, MAYBE_SENT_PREFIX, OUTSIDE_COUNTRIES, RECHECK_PREFIX,
+    StateManager,
 )
 
 # A follow-up waits at least this long after the email it follows went out,
@@ -306,6 +307,22 @@ class Sender:
                 return False
         return True
 
+    async def _outside_countries(self, prospect) -> tuple[bool, str] | None:
+        """Why compliance.allowed_countries keeps cold email from this
+        prospect, as (known_elsewhere, reason), or None to send.
+
+        Only a country Harvey is sure of counts: a guess could put someone
+        abroad in the list, so an unknown country is held too."""
+        allowed = compliance_of(self.config).allowed_countries
+        if not allowed:
+            return None
+        country = await self._recipient_country(prospect)
+        if country in allowed:
+            return None
+        if country:
+            return True, f"{OUTSIDE_COUNTRIES} ({country}; sending only to {', '.join(allowed)})"
+        return False, f"{COUNTRY_UNKNOWN} (sending only to {', '.join(allowed)})"
+
     def _reviewed_leads(self, prospects: list) -> list:
         """The prospects whose merge fields pass the autopilot review."""
         kept = []
@@ -429,6 +446,9 @@ class Sender:
                 continue  # the user emailed them by hand
             # Deliverability gate: never send to unverified/guessed addresses —
             # bounces are the fastest way to torch a sending domain.
+            if outside := await self._outside_countries(prospect):
+                logger.info(f"Sender: left {email} out of '{campaign.name}': {outside[1]}.")
+                continue
             if (prospect.email_status or "guess") not in sendable_email:
                 skipped_unverified += 1
                 logger.debug(
@@ -781,6 +801,13 @@ class Sender:
             colleague = await self.state.colleague_who_replied(prospect.id)
             if colleague:
                 return "cancelled", f"{COLLEAGUE_REPLIED} ({colleague})"
+            if outside := await self._outside_countries(prospect):
+                known_elsewhere, reason = outside
+                if known_elsewhere:
+                    return "cancelled", reason
+                if item.get("approved_by") != "you":
+                    # You approved it one by one, so you know where they are.
+                    return "pending_review", HELD_FOR_REVIEW + reason
         gate = pre_send_check(
             item["to_email"], item["subject"], self._outgoing_body(item),
             prospect=prospect, allow_risky=allow_risky, kind=item["kind"],

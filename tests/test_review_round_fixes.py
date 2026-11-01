@@ -321,3 +321,20 @@ async def test_a_writer_with_everyone_held_back_says_so(state):  # noqa: F811
     brain = SimpleNamespace(load_skills_for_agent=lambda agent: "")
     writer = Writer(brain=brain, state=state, config=_cfg(provider="instantly"))
     assert await writer.run() == NOTHING_TO_WRITE
+
+
+# ── discovery: directories, news and associations aren't firms ──
+
+@pytest.mark.parametrize("domain", ["sfgate.com", "bizjournals.com",
+                                    "lawyers.findlaw.com", "attorneys.superlawyers.com",
+                                    "bestlawyers.com", "aarp.org", "naela.org", "massnaela.com"])
+def test_directories_news_and_associations_are_junk(domain):
+    from harvey.collectors.discover import is_junk
+    assert is_junk(domain)
+
+
+@pytest.mark.parametrize("domain", ["pryorlawyers.example", "yourelderlawyers.example",
+                                    "trustandestateslawyers.example", "patchettlaw.example"])
+def test_firms_with_lawyers_in_the_domain_are_not(domain):
+    from harvey.collectors.discover import is_junk
+    assert not is_junk(domain)

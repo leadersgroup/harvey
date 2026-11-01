@@ -65,8 +65,16 @@ JUNK_DOMAIN_PATTERNS = tuple(re.compile(p, re.I) for p in (
     r"(^|\.)(olx|quikr|flipkart|snapdeal|myntra|shopclues|etsy|ebay|alibaba|aliexpress)\.",
     # hobby communities & model repositories — never a prospect
     r"(^|\.)(boardgamegeek|team-bhp|hackaday|instructables|thingiverse|printables|cults3d|thangs|grabcad)\.",
+    # lawyer directories, rankings and legal marketplaces: they list firms,
+    # they aren't one ("attorneys.superlawyers.com", "lawyers.findlaw.com")
+    r"(^|\.)(findlaw|justia|avvo|martindale|superlawyers|bestlawyers|lawinfo|nolo|legalmatch)\.",
+    r"(^|\.)(upcounsel|lawyers|attorneys|hg|lawyer|legalzoom|rocketlawyer|trustandwill)\.(com|org|net)$",
+    # professional associations and member groups ("naela.org", "massnaela.com")
+    r"(^|\.)(aarp|naela|[a-z]+naela|americanbar|[a-z]*statebar|[a-z]*barassociation)\.(org|com)$",
     # media & reference
     r"(^|\.)(wikipedia|reddit|quora|medium|substack|forbes|inc|entrepreneur)\.",
+    r"(^|\.)(sfgate|bizjournals|patch|nytimes|washingtonpost|usatoday|cnbc|cnn|businessinsider)\.",
+    r"(^|\.)(prnewswire|businesswire|globenewswire|nerdwallet|investopedia|bankrate)\.",
     r"(news|magazine|journal|gazette|tribune|herald)\.(com|org|net)$",
     # institutional
     r"\.(edu|gov|mil)$",

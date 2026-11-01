@@ -76,6 +76,16 @@ def casual_company(name: str) -> str:
 # Instantly campaign status 1 is "active"; the share last set on each
 # campaign is kept so it's only patched when it changes.
 INSTANTLY_ACTIVE = 1
+INSTANTLY_PAUSED = 2
+# Every campaign Harvey makes in Instantly starts with this, so you can tell
+# them from your own there. Harvey's own records keep the plain name.
+INSTANTLY_PREFIX = "Harvey - "
+
+
+def instantly_name(name: str) -> str:
+    """The name a campaign gets in Instantly: "Harvey - Tax Law Firms-outreach"."""
+    name = (name or "").strip()
+    return name if name.lower().startswith("harvey") else INSTANTLY_PREFIX + name
 DAILY_SHARE_KEY = "instantly_daily_share:"
 BOUNCE_COUNT_KEY = "bounce_count"
 
@@ -287,7 +297,9 @@ class Sender:
 
         logger.info("Sender: Checking for campaigns to deploy...")
         draft_campaigns = await self.state.get_campaigns_by_status("draft")
-        if not draft_campaigns:
+        top_ups = [c for c in await self.state.get_campaigns_by_status("active")
+                   if c.instantly_campaign_id and await self._has_queued(c)]
+        if not draft_campaigns and not top_ups:
             logger.info("Sender: No draft campaigns to deploy.")
             await self._share_daily_limit()
             return
@@ -305,7 +317,20 @@ class Sender:
                 await self._deploy_campaign(campaign)
             except Exception as e:
                 logger.error(f"Sender: Failed to deploy campaign {campaign.name}: {e}")
+        for campaign in top_ups:
+            try:
+                await self._deploy_campaign(campaign, top_up=True)
+            except Exception as e:
+                logger.error(f"Sender: Failed to add leads to campaign {campaign.name}: {e}")
         await self._share_daily_limit()
+
+    async def _has_queued(self, campaign) -> bool:
+        """Prospects the Writer added to this live campaign, not yet uploaded."""
+        for pid in campaign.prospect_ids:
+            p = await self.state.get_prospect(pid)
+            if p and p.status == "queued":
+                return True
+        return False
 
     async def _live_instantly_ids(self) -> list[str] | None:
         """Instantly ids of Harvey's campaigns that are still sending there
@@ -390,8 +415,11 @@ class Sender:
                 kept.append(p)
         return kept
 
-    async def _deploy_campaign(self, campaign):
-        """Deploy a single campaign to Instantly. Idempotent: safe to retry."""
+    async def _deploy_campaign(self, campaign, top_up: bool = False):
+        """Deploy a single campaign to Instantly. Idempotent: safe to retry.
+
+        ``top_up``: the campaign is already live there and the Writer added
+        prospects to it; upload them and leave its emails as they are."""
         # Instantly owns campaign scheduling and has no per-message outbox
         # approval here. Fail closed rather than silently bypass the setting,
         # including retries of an already-created remote campaign.
@@ -428,14 +456,20 @@ class Sender:
         # 1. Create campaign in Instantly — or resume one from a previous
         # partially-failed deploy. Never create a duplicate.
         campaign_id = campaign.instantly_campaign_id
-        if campaign_id:
+        if top_up:
+            live = await self.instantly.get_campaign(campaign_id)
+            if not isinstance(live, dict) or live.get("status") == INSTANTLY_PAUSED:
+                logger.info(f"Sender: '{campaign.name}' is paused or gone in Instantly; "
+                            "not adding leads to it.")
+                return
+        elif campaign_id:
             logger.info(
                 f"Sender: Campaign '{campaign.name}' already has Instantly ID "
                 f"{campaign_id}. Resuming deploy instead of recreating."
             )
         else:
             instantly_campaign = await self.instantly.create_campaign(
-                campaign.name,
+                instantly_name(campaign.name),
                 timezone=operator_timezone(self.config),
                 daily_limit=await self._share_daily_limit(extra=1),
             )
@@ -464,10 +498,11 @@ class Sender:
         ]
 
         await self.state.remember_footer_lines(compliance_footer_lines(self.config))
-        result = await self.instantly.set_campaign_emails(campaign_id, sequences)
-        if result is None:
-            logger.error(f"Sender: Failed to set emails for campaign {campaign_id}")
-            return
+        if not top_up:
+            result = await self.instantly.set_campaign_emails(campaign_id, sequences)
+            if result is None:
+                logger.error(f"Sender: Failed to set emails for campaign {campaign_id}")
+                return
 
         # 3. Add leads — validated, deduped, never-contacted, deliverable-only
         allow_risky = getattr(self.config.channels.email, "send_to_risky", False)
@@ -517,6 +552,8 @@ class Sender:
                 f"unverified emails from '{campaign.name}'."
             )
 
+        if not prospects and top_up:
+            return      # nothing new it may send to; the campaign runs on as it is
         if not prospects:
             # Retry path: leads were already staged and marked 'contacted'
             # on a previous cycle but activation failed. Just activate.
@@ -604,11 +641,13 @@ class Sender:
                 "campaign_name": campaign.name,
                 "instantly_campaign_id": campaign_id,
                 "leads_added": len(leads),
+                **({"topped_up": True} if top_up else {}),
             },
         )
 
         logger.info(
-            f"Sender: Campaign '{campaign.name}' deployed to Instantly "
+            f"Sender: Campaign '{campaign.name}' "
+            f"{'topped up' if top_up else 'deployed to Instantly'} "
             f"with {len(leads)} leads. Campaign ID: {campaign_id}"
         )
 

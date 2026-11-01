@@ -13,6 +13,18 @@ from harvey.integrations.instantly import InstantlyClient
 from tests.test_outbox_native import seed_prospect, state  # noqa: F401  (fixture)
 
 
+def _cfg(**email):
+    """A test config of its own: Cfg's settings are class attributes, so
+    changing them on one instance would change them for every later test."""
+    from types import SimpleNamespace
+    from tests.test_outbox_native import Cfg
+    base = {k: v for k, v in vars(Cfg.channels.email).items() if not k.startswith("_")}
+    cfg = Cfg()
+    cfg.channels = SimpleNamespace(email=SimpleNamespace(**{**base, **email}),
+                                   linkedin=Cfg.channels.linkedin)
+    return cfg
+
+
 # ── names ──
 
 @pytest.mark.parametrize("text", ["Advance Directives", "Dallas Planning", "Firm Overview",
@@ -122,10 +134,8 @@ async def test_delete_lead_sends_a_body_and_only_deletes_that_address():
 async def test_the_daily_limit_is_shared_across_live_campaigns(state):  # noqa: F811
     from harvey.agents.sender import Sender
     from harvey.models.campaign import Campaign, EmailStep
-    from tests.test_outbox_native import Cfg, Env
-    cfg = Cfg()
-    cfg.channels.email.max_daily_sends = 50
-    sender = Sender(brain=None, state=state, config=cfg, env=Env())
+    from tests.test_outbox_native import Env
+    sender = Sender(brain=None, state=state, config=_cfg(provider="instantly"), env=Env())
     for i in range(5):
         await state.add_campaign(Campaign(
             id="", name=f"c{i}", channel="email", status="active", instantly_campaign_id=f"i{i}",
@@ -158,3 +168,88 @@ def test_native_sends_fill_instantlys_sender_tag_with_the_persona():
                  email="jo@acme.example")
     assert sender._render("Hi {{first_name}} at {{company}}\n\n{{sendingAccountName}}", p) == \
         "Hi Jo at Acme\n\nPat Example"
+
+
+# ── Instantly: "Harvey - " names, and one live campaign per group ──
+
+def test_instantly_names_start_with_harvey():
+    from harvey.agents.sender import instantly_name
+    assert instantly_name("Tax Law Firms-outreach") == "Harvey - Tax Law Firms-outreach"
+    assert instantly_name("Harvey - Tax Law Firms-outreach") == "Harvey - Tax Law Firms-outreach"
+
+
+async def _live_campaign(state, name, prospect_ids, instantly_id="i1"):
+    from harvey.models.campaign import Campaign, EmailStep
+    return await state.add_campaign(Campaign(
+        id="", name=name, channel="email", status="active", instantly_campaign_id=instantly_id,
+        sequence=[EmailStep(step=1, subject="s", body="Hi {{first_name}}", delay_days=0)],
+        prospect_ids=prospect_ids))
+
+
+@pytest.mark.asyncio
+async def test_new_prospects_join_the_live_campaign_for_their_group(state):  # noqa: F811
+    from harvey.agents.writer import Writer
+    first = await seed_prospect(state, email="ann@one.example", status="contacted")
+    cid = await _live_campaign(state, "Tax Law Firms-outreach", [first])
+    newcomer = await state.get_prospect(await seed_prospect(state, email="bo@two.example"))
+    writer = Writer(brain=None, state=state, config=_cfg(provider="instantly"))
+    assert await writer._join_live_campaign("Tax Law Firms-outreach", [newcomer])
+    [campaign] = await state.get_campaigns_by_status("active")
+    assert campaign.id == cid and campaign.prospect_ids == [first, newcomer.id]
+    assert (await state.get_prospect(newcomer.id)).status == "queued"
+    assert not await writer._join_live_campaign("Elder Law Firms-outreach", [newcomer])
+
+
+@pytest.mark.asyncio
+async def test_a_top_up_uploads_only_the_newcomers_and_keeps_the_emails(state):  # noqa: F811
+    from harvey.agents.sender import Sender
+    from tests.test_outbox_native import Env
+    cfg = _cfg(provider="instantly", require_approval=False)
+    sender = Sender(brain=None, state=state, config=cfg, env=Env())
+    sent = await seed_prospect(state, email="ann@one.example", status="contacted")
+    new = await seed_prospect(state, email="bo@two.example", status="queued")
+    await _live_campaign(state, "Tax Law Firms-outreach", [sent, new])
+    calls = []
+
+    async def get_campaign(campaign_id):
+        return {"id": campaign_id, "status": 1}
+
+    async def record(name):
+        async def call(*args, **kwargs):
+            calls.append((name, args))
+            return {}
+        return call
+    sender.instantly.get_campaign = get_campaign
+    for name in ("set_campaign_emails", "add_leads", "activate_campaign", "list_campaigns",
+                 "set_daily_limit"):
+        setattr(sender.instantly, name, await record(name))
+    await sender.run()
+    names = [c[0] for c in calls]
+    assert "set_campaign_emails" not in names
+    [(_, (campaign_id, leads))] = [c for c in calls if c[0] == "add_leads"]
+    assert [lead["email"] for lead in leads] == ["bo@two.example"]
+    assert (await state.get_prospect(new)).status == "contacted"
+
+
+@pytest.mark.asyncio
+async def test_a_campaign_you_paused_in_instantly_gets_no_new_leads(state):  # noqa: F811
+    from harvey.agents.sender import Sender
+    from tests.test_outbox_native import Env
+    cfg = _cfg(provider="instantly", require_approval=False)
+    sender = Sender(brain=None, state=state, config=cfg, env=Env())
+    new = await seed_prospect(state, email="bo@two.example", status="queued")
+    campaign_id = await _live_campaign(state, "Tax Law Firms-outreach", [new])
+    added = []
+
+    async def get_campaign(campaign_id):
+        return {"id": campaign_id, "status": 2}
+
+    async def add_leads(*args):
+        added.append(args)
+        return {}
+    sender.instantly.get_campaign = get_campaign
+    sender.instantly.add_leads = add_leads
+    [campaign] = await state.get_campaigns_by_status("active")
+    assert campaign.id == campaign_id
+    await sender._deploy_campaign(campaign, top_up=True)
+    assert added == [] and (await state.get_prospect(new)).status == "queued"

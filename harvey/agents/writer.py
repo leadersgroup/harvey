@@ -12,7 +12,7 @@ design). Every draft still passes the deterministic pre-send gate.
 import json
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from harvey.brain import Brain
 from harvey.config import EmailRulesError, HarveyConfig, compliance_of, load_email_rules
@@ -57,6 +57,18 @@ EMAIL_RULES_PROBLEM_KEY = "email_rules_problem"
 # A second person at a company waits this long after a colleague was
 # emailed: the sequence (about a week) has finished and gone unanswered.
 COLLEAGUE_GAP_DAYS = 21
+# On Instantly, new prospects join the live campaign for their group while
+# it is younger than this, rather than each batch getting its own.
+JOIN_CAMPAIGN_DAYS = 60
+
+
+def _naive(when) -> datetime:
+    """A stored timestamp (datetime or ISO text) as naive UTC."""
+    if isinstance(when, str):
+        when = datetime.fromisoformat(when)
+    if when.tzinfo is not None:
+        when = when.astimezone(timezone.utc).replace(tzinfo=None)
+    return when
 BUILT_IN_FOOTER = "- No postal address, unsubscribe or opt-out line: Harvey adds them when it sends."
 
 
@@ -119,6 +131,34 @@ class Writer:
     @property
     def is_native(self) -> bool:
         return self.config.channels.email.provider in NATIVE_PROVIDERS
+
+    async def _join_live_campaign(self, batch_name: str, prospects: list) -> bool:
+        """On Instantly, add this batch to the live campaign for the same
+        group instead of making another one with a handful of leads. Its
+        emails are templates with merge tags, so they fit new prospects as
+        well; the Sender uploads them on its next pass. A campaign older than
+        JOIN_CAMPAIGN_DAYS gets no more joiners, so the copy is refreshed."""
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=JOIN_CAMPAIGN_DAYS)
+        live = [c for c in await self.state.get_campaigns_by_status("active")
+                if c.name == batch_name and c.instantly_campaign_id
+                and _naive(c.created_at) >= cutoff]
+        if not live:
+            return False
+        campaign = max(live, key=lambda c: _naive(c.created_at))
+        ids = list(campaign.prospect_ids)
+        added = [p.id for p in prospects if p.id not in ids]
+        await self.state.update_campaign(campaign.id, prospect_ids_json=json.dumps(ids + added))
+        for p in prospects:
+            await self.state.queue_prospect_if_unsent(p.id)
+            await self.state.delete_setting(WRITE_ATTEMPTS_KEY + p.id)
+        await self.state.log_action(
+            action_type="write_campaign", agent="writer",
+            details={"campaign_id": campaign.id, "campaign_name": batch_name,
+                     "prospect_count": len(added), "joined": True},
+        )
+        logger.info(f"Writer: added {len(added)} prospect(s) to live campaign '{batch_name}' "
+                    "instead of writing a new one.")
+        return True
 
     async def _one_per_company(self, prospects: list) -> list:
         """At most one new cold contact per company, and none while a
@@ -224,6 +264,9 @@ class Writer:
 
         for batch_name, prospects in batches.items():
             if not prospects:
+                continue
+
+            if not self.is_native and await self._join_live_campaign(batch_name, prospects):
                 continue
 
             logger.info(

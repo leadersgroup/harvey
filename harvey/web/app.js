@@ -540,8 +540,12 @@ function renderFigures(stats) {
     '<span class="kpi-note">' + note + '</span></div>';
 
   // Instantly sends from its own servers, so the Outbox never sees them.
+  const inst = stats.instantly;
   const sent = stats.email_provider === 'instantly'
-    ? card('Emails sent', '&mdash;', '', 'Instantly tracks sends')
+    ? (inst
+        ? card('Emails sent', inst.sent, '', 'from Instantly · <b>' + inst.replies + '</b> ' +
+               (inst.replies === 1 ? 'reply' : 'replies'))
+        : card('Emails sent', '&mdash;', '', 'Instantly tracks sends'))
     : card('Emails sent', sum(t.sent), sparkBars(t.sent, 'Emails sent per day, last 14 days'),
            'last 14 days · <b>' + (stats.outbox_approved || 0) + '</b> scheduled');
   const waiting = (stats.outbox_pending || 0) + (stats.needs_human || 0);

@@ -330,6 +330,46 @@ async def get_setup_status():
 # ── Settings ──
 
 
+# Instantly's own counts for Harvey's campaigns, read-only: what it has sent
+# and the replies it received. Harvey doesn't send on Instantly or read its
+# replies (they can go to a CRM instead), so its own records can't say.
+INSTANTLY_TOTALS_SECONDS = 300
+_instantly_totals_cache: dict = {"at": 0.0, "value": None}
+
+
+async def _instantly_totals() -> dict | None:
+    """{"sent", "replies"} across Harvey's campaigns, from Instantly's
+    analytics; cached so a page refreshing every 10 seconds asks once every
+    five minutes. None when Instantly can't be asked."""
+    import time
+    now = time.monotonic()
+    cache = _instantly_totals_cache
+    if cache["value"] is not None and now - cache["at"] < INSTANTLY_TOTALS_SECONDS:
+        return cache["value"]
+    key = _read_env_file().get("INSTANTLY_API_KEY", "")
+    rows = await query_db("SELECT instantly_campaign_id AS id FROM campaigns "
+                          "WHERE instantly_campaign_id != ''")
+    ours = {r["id"] for r in rows}
+    if not key or not ours:
+        return None
+    try:
+        from harvey.integrations.instantly import InstantlyClient
+        client = InstantlyClient(key)
+        items = client._extract_items(await client._request("GET", "/campaigns/analytics"))
+    except Exception as e:
+        logger.debug("Instantly analytics unavailable: %s", e)
+        return cache["value"]
+    mine = [i for i in items if isinstance(i, dict) and i.get("campaign_id") in ours]
+    value = {
+        "sent": sum(int(i.get("emails_sent_count") or 0) for i in mine),
+        # People, not messages; auto-replies (out of office) left out.
+        "replies": sum(max(0, int(i.get("reply_count_unique") or 0)
+                              - int(i.get("reply_count_automatic_unique") or 0)) for i in mine),
+    }
+    cache.update(at=now, value=value)
+    return value
+
+
 def _current_provider() -> str:
     """Read channels.email.provider from the active config (best-effort)."""
     try:
@@ -1942,6 +1982,14 @@ async def get_live_status():
                    and (p.get("status") or "new") in HAND_SENDABLE_STATUSES
                    and (p.get("email_status") or "guess") in HAND_SENDABLE_EMAIL}
     replies = sum(1 for p in prospects if p.get("status") in REPLY_STATUSES)
+    replies_detail = f"{replies} replies" if replies else "No replies yet"
+    if instantly:
+        # Replies land in Instantly (and wherever it syncs them), not Harvey.
+        totals = await _instantly_totals()
+        if totals is not None:
+            replies = totals["replies"]
+            replies_detail = (f"{replies} in Instantly" if replies else "No replies yet") + \
+                " · answered there, not by Harvey"
     cost = float(await _first(
         "SELECT COALESCE(SUM(cost_usd), 0) AS c FROM runs", key="c") or 0)
 
@@ -2015,7 +2063,7 @@ async def get_live_status():
              + ("uploaded · Instantly sends weekdays 9-5 · see its Sent counts"
                 if instantly else "sent")),
         step("Replies", replies, 0, False,
-             f"{replies} replies" if replies else "No replies yet", info=True),
+             replies_detail, info=True),
     ]
 
     next_tab = ""   # where the next step is done, when it's done in the dashboard
@@ -2104,6 +2152,8 @@ async def get_today():
             "needs_human": needs_human,
             "signals_proposed": len(proposed),
             "email_provider": _current_provider(),
+            "instantly": (await _instantly_totals()
+                          if _current_provider() == "instantly" else None),
             "unprofiled": unprofiled_count,
         }
 

@@ -190,3 +190,21 @@ def test_on_instantly_the_step_says_uploaded_not_sent(client, env, monkeypatch):
     step = _step(client.get("/api/live-status").json(), "Uploaded to Instantly")
     assert (step["done"], step["total"]) == (1, 1)
     assert "Instantly sends" in step["detail"]
+
+
+def test_on_instantly_sent_and_replies_come_from_its_analytics(client, env, monkeypatch):
+    from harvey.integrations.instantly import InstantlyClient
+    monkeypatch.setattr(dash, "_current_provider", lambda: "instantly")
+    monkeypatch.setattr(dash, "_read_env_file", lambda: {"INSTANTLY_API_KEY": "k"})
+    monkeypatch.setattr(dash, "_instantly_totals_cache", {"at": 0.0, "value": None})
+    _sql(env, "INSERT INTO campaigns (id, name, instantly_campaign_id, status) "
+              "VALUES ('c1', 'Tax', 'i1', 'active')")
+
+    async def analytics(self, method, path, body=None, params=None):
+        return [{"campaign_id": "i1", "emails_sent_count": 5, "reply_count_unique": 3,
+                 "reply_count_automatic_unique": 1},
+                {"campaign_id": "someone-elses", "emails_sent_count": 99, "reply_count_unique": 9}]
+    monkeypatch.setattr(InstantlyClient, "_request", analytics)
+    replies = _step(client.get("/api/live-status").json(), "Replies")
+    assert replies["done"] == 2 and "answered there, not by Harvey" in replies["detail"]
+    assert dash._instantly_totals_cache["value"] == {"sent": 5, "replies": 2}

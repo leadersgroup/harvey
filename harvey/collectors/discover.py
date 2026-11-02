@@ -291,10 +291,14 @@ def looks_like_keyword(name: str) -> bool:
 
 
 def squashed_name(name: str, domain: str) -> bool:
-    """One word that is just the domain's label: "Fladvisors", "Lgbs"."""
+    """One word that is just the domain's label, capitalised the way a
+    domain gets turned into a name ("Fladvisors", "Lgbs"). A brand styled
+    that way on purpose keeps its inner or all capitals ("ContactCraft",
+    "LAWCLERK") and isn't counted."""
     name = (name or "").strip()
     label = (domain or "").split(".")[0].replace("-", "").lower()
-    return bool(name) and " " not in name and name.lower() == label
+    return (bool(name) and " " not in name and name.lower() == label
+            and name in (name.lower(), name.capitalize()))
 
 
 def brand_name(html: str, domain: str) -> str:

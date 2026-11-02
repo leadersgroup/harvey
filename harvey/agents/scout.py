@@ -42,6 +42,7 @@ from harvey.collectors.discover import (  # noqa: F401
     brand_name, is_junk, looks_like_brand, looks_like_keyword, name_from_domain,
     outside_countries, site_name_from_html, squashed_name,
 )
+from harvey.collectors.fit import industry_fit
 from harvey.collectors.profile import _reads_like_title, looks_like_challenge
 from harvey.config import HarveyConfig, EnvConfig
 from harvey.integrations.email_finder import (
@@ -1408,6 +1409,27 @@ Respond ONLY with the JSON array."""
 
     # ── Shared utilities ──
 
+    async def _fits_icp(self, domain: str) -> bool:
+        """Does the company's own site read like one of icp.industries? A
+        vendor, newspaper or bank found by an industry search is skipped
+        before anyone there is contacted. Uses the pages already read for
+        its people, so it costs no extra requests; a site that can't be
+        read isn't judged."""
+        try:
+            site = await self._read_site(domain)
+        except Exception:
+            return True
+        pages = site.get("pages") or []
+        if not pages:
+            return True
+        text = " ".join(" ".join(people_mod.page_lines(html)) for _, html in pages[:4])
+        icp = getattr(getattr(self, "config", None), "icp", None)
+        fits, reason = industry_fit(text, getattr(icp, "industries", None) or [])
+        if fits is False:
+            logger.info(f"Scout: skipped {domain}: {reason}.")
+            return False
+        return True
+
     async def _better_name(self, company_id: str, domain: str, name: str) -> str:
         """A stored name squashed from the domain ("Lgbs") or a search keyword
         ("Austin Tax Attorney") becomes the one the homepage gives itself,
@@ -1741,6 +1763,8 @@ Respond ONLY with the JSON array."""
         source: str = "company_website",
     ) -> list[Prospect]:
         """Team-page scrape → ICP-matched, email-resolved, deduped prospects."""
+        if not await self._fits_icp(domain):
+            return []
         try:
             team_members = await self._scrape_team_page(domain)
         except Exception as e:

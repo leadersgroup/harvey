@@ -33,6 +33,8 @@ def env(tmp_path, monkeypatch):
     # No mailbox connected: the user sends by hand. Tests that need Harvey
     # to be able to send set this back.
     monkeypatch.setattr(dash, "_harvey_can_send", lambda: False)
+    # Harvey's own sending, whatever the developer's real config says.
+    monkeypatch.setattr(dash, "_current_provider", lambda: "smtp")
     async def _init():
         state = StateManager(db_path=str(db))
         await state.init_db()
@@ -179,3 +181,12 @@ def test_opted_out_and_unreachable_people_are_never_asked_to_be_sent(client, env
     _prospect(env, "p2", "b@acme.test", email_status="guess", status="queued")
     _campaign(env, "c1", ["p1", "p2"])
     assert "Open Campaigns" not in client.get("/api/live-status").json()["next"]
+
+
+def test_on_instantly_the_step_says_uploaded_not_sent(client, env, monkeypatch):
+    monkeypatch.setattr(dash, "_current_provider", lambda: "instantly")
+    _prospect(env, "p1", "a@acme.test", status="contacted")
+    _campaign(env, "c1", ["p1"])
+    step = _step(client.get("/api/live-status").json(), "Uploaded to Instantly")
+    assert (step["done"], step["total"]) == (1, 1)
+    assert "Instantly sends" in step["detail"]

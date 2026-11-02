@@ -1929,6 +1929,7 @@ async def get_live_status():
         if isinstance(ids, list):
             drafted.update(i for i in ids if isinstance(i, str))
     sent = {p["id"] for p in prospects if p.get("status") in SENT_STATUSES}
+    instantly = _current_provider() == "instantly"
     # Who is left for the user to send by hand: only when Harvey can't send
     # itself, and never someone Harvey has queued, sent to, or can't reach.
     harvey_sends = _harvey_can_send()
@@ -2006,8 +2007,13 @@ async def get_live_status():
              + (f" · {by_status['invalid']} bad" if by_status.get("invalid") else "")),
         step("Write first emails", len(drafted), len(deliverable | drafted), False,
              f"{len(drafted)} written · see Campaigns"),
-        step("Sent", len(sent & drafted), len(drafted), False,
-             f"{len(sent & drafted)} of {len(drafted)} sent"),
+        # On Instantly, "contacted" means uploaded as a lead: Instantly sends
+        # on its own schedule, and its campaigns show what actually went out.
+        step("Uploaded to Instantly" if instantly else "Sent",
+             len(sent & drafted), len(drafted), False,
+             f"{len(sent & drafted)} of {len(drafted)} "
+             + ("uploaded · Instantly sends weekdays 9-5 · see its Sent counts"
+                if instantly else "sent")),
         step("Replies", replies, 0, False,
              f"{replies} replies" if replies else "No replies yet", info=True),
     ]

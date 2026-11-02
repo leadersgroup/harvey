@@ -102,6 +102,11 @@ INBOX_PREFERRED = ("owner", "office", "info", "contact", "contactus", "hello",
                    "team", "service", "sales", "estimates", "quotes",
                    "inquiries", "enquiries", "admin", "support")
 MAX_PROSPECTS_PER_CYCLE = 25
+# Contacts whose email stayed a guess get another check, this many a cycle,
+# each at most once a day and this many times in all.
+RECHECK_GUESSES_PER_CYCLE = 5
+RECHECK_GUESS_TRIES = 3
+RECHECK_GUESS_KEY = "guess_recheck:"
 
 # Hunter domain-searches per heartbeat. The monthly budget itself is shared
 # with email-pattern lookups and set by HUNTER_MONTHLY_SEARCHES (see
@@ -246,6 +251,10 @@ class Scout:
 
         # Each strategy is isolated so one failing does not abort the cycle.
         strategies = []
+        # Finish what's already found before finding more: contacts whose
+        # email stayed a guess (no verifier credit at the time) get another
+        # check while credits last. Each is cheaper to finish than a new one.
+        strategies.append(("recheck_guesses", self._recheck_guesses))
         # Hunter first, if configured: real named people with a real
         # verification verdict beats a scrape guess, but the free tier's
         # monthly budget (HUNTER_MONTHLY_SEARCHES, 25 by default) is small —
@@ -282,6 +291,46 @@ class Scout:
             details={"prospects_found": prospects_found},
         )
         logger.info(f"Scout: Found {prospects_found} new prospects this cycle.")
+
+    async def _recheck_guesses(self) -> int:
+        """Verify again the emails of 'new' contacts left as a guess, a few
+        per cycle (RECHECK_GUESSES_PER_CYCLE): decision makers first, each
+        at most once a day and RECHECK_GUESS_TRIES times in all. Stops at
+        the first that stays a guess: the verifiers are out of credit or
+        can't tell, and the rest would cost the same for nothing. Returns 0:
+        these aren't new prospects."""
+        from harvey.collectors.people import owner_rank
+        today = datetime.now(timezone.utc).date().isoformat()
+        stuck = [p for p in await self.state.get_prospects_by_status("new")
+                 if p.email and (p.email_status or "guess") == "guess"]
+        stuck.sort(key=lambda p: -owner_rank(p.title or ""))
+        checked = settled = 0
+        for p in stuck:
+            if checked >= RECHECK_GUESSES_PER_CYCLE:
+                break
+            key = RECHECK_GUESS_KEY + p.id
+            try:
+                tries = json.loads(await self.state.get_setting(key) or "{}")
+            except ValueError:
+                tries = {}
+            if tries.get("n", 0) >= RECHECK_GUESS_TRIES or tries.get("day") == today:
+                continue
+            checked += 1
+            await self.state.set_setting(key, json.dumps({"n": tries.get("n", 0) + 1, "day": today}))
+            domain = p.email.rsplit("@", 1)[-1]
+            if p.is_company_inbox or not (p.first_name and p.last_name):
+                email, status = p.email, await verify_published_address(p.email, self.env)
+            else:
+                email, status = await self._resolve_email(p.first_name, p.last_name, domain)
+                email = email or p.email
+            if status == "guess":
+                break
+            await self.state.update_prospect_email(p.id, email, status)
+            settled += 1
+            logger.info(f"Scout: re-checked {p.email}: now {email} [{status}]")
+        if checked:
+            logger.info(f"Scout: re-checked {checked} guessed email(s), {settled} settled.")
+        return 0
 
     # ── Prospect dedup helpers ──
 

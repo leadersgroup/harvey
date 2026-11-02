@@ -612,3 +612,45 @@ def test_advisor_firm_names_are_not_keywords_and_squashed_names_never_win():
     from harvey.collectors.discover import brand_name, looks_like_keyword
     assert not looks_like_keyword("Brightwater Life Advisors")
     assert brand_name('<meta property="og:site_name" content="Bwadvisors">', "bwadvisors.example") == ""
+
+
+# ── guesses get another check when credits allow ──
+
+async def _scout_for_recheck(state, results):
+    from harvey.agents.scout import Scout
+    scout = Scout.__new__(Scout)
+    scout.state, scout.env = state, None
+    calls = []
+
+    async def resolve(first, last, domain):
+        calls.append(first)
+        return results.pop(0)
+    scout._resolve_email = resolve
+    return scout, calls
+
+
+@pytest.mark.asyncio
+async def test_a_guess_is_rechecked_and_settled(state):  # noqa: F811
+    pid = await seed_prospect(state, email="jane@acme.example", estatus="guess")
+    scout, calls = await _scout_for_recheck(state, [("j.doe@acme.example", "verified")])
+    await scout._recheck_guesses()
+    p = await state.get_prospect(pid)
+    assert (p.email, p.email_status) == ("j.doe@acme.example", "verified")
+
+
+@pytest.mark.asyncio
+async def test_an_undecided_recheck_stops_the_batch(state):  # noqa: F811
+    for n in range(3):
+        await seed_prospect(state, email=f"p{n}@acme{n}.example", estatus="guess")
+    scout, calls = await _scout_for_recheck(state, [("", "guess")] * 3)
+    await scout._recheck_guesses()
+    assert len(calls) == 1      # out of credits: one try, not three
+
+
+@pytest.mark.asyncio
+async def test_a_guess_is_tried_once_a_day(state):  # noqa: F811
+    await seed_prospect(state, email="jane@acme.example", estatus="guess")
+    scout, calls = await _scout_for_recheck(state, [("", "guess"), ("", "guess")])
+    await scout._recheck_guesses()
+    await scout._recheck_guesses()
+    assert len(calls) == 1

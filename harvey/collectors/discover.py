@@ -274,7 +274,9 @@ def looks_like_brand(text: str) -> bool:
 # "Austin Tax Attorney", "AZ Tax Attorneys", "Texas sales tax attorney near
 # me": what someone searches for, not what a firm is called. A firm name
 # says law, firm, group, office or a legal form somewhere.
-_KEYWORD_TAIL = re.compile(r"(?i)\b(?:attorneys?|lawyers?|advisors?|planners?|agents?|cpas?)$")
+# Only lawyers: "Financial Life Advisors" or "Harbor Insurance Agents" is a
+# firm's real name far more often than a search phrase.
+_KEYWORD_TAIL = re.compile(r"(?i)\b(?:attorneys?|lawyers?)$")
 _FIRM_WORD = re.compile(r"(?i)\b(?:law|firm|group|offices?|partners|associates|pllc|llc|llp|"
                         r"p\.?c\.?|p\.?a\.?|ltd|inc|chartered)\b|&")
 
@@ -288,6 +290,13 @@ def looks_like_keyword(name: str) -> bool:
     return bool(_KEYWORD_TAIL.search(name)) and not _FIRM_WORD.search(name)
 
 
+def squashed_name(name: str, domain: str) -> bool:
+    """One word that is just the domain's label: "Fladvisors", "Lgbs"."""
+    name = (name or "").strip()
+    label = (domain or "").split(".")[0].replace("-", "").lower()
+    return bool(name) and " " not in name and name.lower() == label
+
+
 def brand_name(html: str, domain: str) -> str:
     """The name a business gives itself on its homepage: its declared
     og:site_name (less any tagline after a separator), else the title
@@ -297,10 +306,10 @@ def brand_name(html: str, domain: str) -> str:
     og = unescape(re.sub(r"\s+", " ", m.group(1))).strip() if m else ""
     if looks_like_brand(og):
         named = business_name(og, domain) if _TITLE_SEPARATORS.search(og) else og
-        if named and not looks_like_keyword(named):
+        if named and not looks_like_keyword(named) and not squashed_name(named, domain):
             return named[:120]
     named = site_name_from_html(html, domain)
-    return "" if looks_like_keyword(named) else named
+    return "" if looks_like_keyword(named) or squashed_name(named, domain) else named
 
 
 def site_name_from_html(html: str, domain: str) -> str:

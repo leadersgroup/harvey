@@ -40,7 +40,7 @@ from harvey.brain import Brain
 from harvey.collectors import people as people_mod
 from harvey.collectors.discover import (  # noqa: F401
     brand_name, is_junk, looks_like_brand, looks_like_keyword, name_from_domain,
-    outside_countries, site_name_from_html,
+    outside_countries, site_name_from_html, squashed_name,
 )
 from harvey.collectors.profile import _reads_like_title, looks_like_challenge
 from harvey.config import HarveyConfig, EnvConfig
@@ -1413,9 +1413,8 @@ Respond ONLY with the JSON array."""
         ("Austin Tax Attorney") becomes the one the homepage gives itself,
         before it reaches anyone's {{company}}. The page is read once per
         cycle and reused for the people on it."""
-        label = domain.split(".")[0].replace("-", "").lower()
-        squashed = " " not in name.strip() and name.lower() == label     # "Lgbs", "AntonLegal"
-        if not (name == name_from_domain(domain) or looks_like_keyword(name) or squashed):
+        if not (name == name_from_domain(domain) or looks_like_keyword(name)
+                or squashed_name(name, domain)):     # "Lgbs", "AntonLegal"
             return name
         try:
             site = await self._read_site(domain)

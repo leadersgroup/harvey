@@ -606,3 +606,9 @@ def test_foreign_domains_and_scripts_are_outside_a_us_only_list(domain, name, ou
     from harvey.collectors.discover import outside_countries
     assert outside_countries(domain, name, ["US"]) is outside
     assert outside_countries(domain, name, []) is False       # no list, no filter
+
+
+def test_advisor_firm_names_are_not_keywords_and_squashed_names_never_win():
+    from harvey.collectors.discover import brand_name, looks_like_keyword
+    assert not looks_like_keyword("Brightwater Life Advisors")
+    assert brand_name('<meta property="og:site_name" content="Bwadvisors">', "bwadvisors.example") == ""

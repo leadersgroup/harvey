@@ -574,3 +574,13 @@ async def test_a_draft_with_no_lead_instantly_takes_fails_instead_of_blocking(st
     await sender._deploy_campaign(campaign)
     assert await state.get_campaigns_by_status("draft") == []
     assert ("DELETE", "/campaigns/i9") in deleted
+
+
+@pytest.mark.parametrize("name, short", [
+    ("Pryor Law Firm, APC", "Pryor Law Firm"), ("Pryor Law, APLC", "Pryor Law"),
+    ("Hollis & Kerr, P.S.C.", "Hollis & Kerr"), ("Quillmont, LC", "Quillmont"),
+    ("Harbor Oak Law Group, P.L.", "Harbor Oak Law Group"), ("Pryor PC", "Pryor"),
+    ("Taylor & Co", "Taylor & Co"), ("Marc Sc", "Marc Sc"), ("Apc Legal", "Apc Legal"),
+])
+def test_more_legal_forms_and_names_that_only_look_like_one(name, short):
+    assert casual_company(name) == short

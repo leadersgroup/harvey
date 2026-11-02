@@ -61,8 +61,11 @@ STOP_STATUSES = {"replied", "opted_out", "lost", "meeting", "closed"}
 KILL_SWITCH_KEY = "sending_paused"
 # A legal form at the end of a company name: nobody says "PLLC" in an email.
 LEGAL_SUFFIX_RE = re.compile(
-    r"(?:,?\s+(?:P\.?L\.?L\.?C|L\.?L\.?P|L\.?L\.?C|P\.?L\.?C|P\.?C|P\.?A|Inc|Ltd|"
-    r"Corp(?:oration)?|Co|Chartered|Chtd|LPA)\.?)+$", re.I)
+    r"(?:,?\s+(?:P\.?L\.?L\.?C|L\.?L\.?P|L\.?L\.?C|P\.?L\.?C|A\.?P\.?L\.?C|A\.?P\.?C|"
+    r"P\.?S\.?C|P\.?C|P\.?A|Inc|Ltd|Corp(?:oration)?|Chartered|Chtd|LPA)\.?"
+    # Short forms that can end a real name ("Taylor & Co", "Marc Sc")
+    # count only after a comma: "Quillmont, LC".
+    r"|,\s*(?:Co|S\.?C|L\.?C|P\.?L)\.?)+$", re.I)
 
 
 def casual_company(name: str) -> str:
@@ -70,7 +73,9 @@ def casual_company(name: str) -> str:
     "Hollis & Kerr", "Brightwater Law PLC" -> "Brightwater Law"."""
     name = (name or "").strip()
     short = LEGAL_SUFFIX_RE.sub("", name).strip(" ,")
-    return short or name
+    if not short or re.search(r"(?i)(?:&|\band)$", short):
+        return name     # "Taylor & Co" stays whole
+    return short
 
 
 # Instantly campaign status 1 is "active"; the share last set on each

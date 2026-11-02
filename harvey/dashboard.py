@@ -2181,6 +2181,18 @@ async def get_today():
                 "action": "Open the log", "tab": "controls",
             })
 
+        from harvey.agents.scout import VERIFICATION_PAUSED_KEY
+        verification_paused = await state.get_setting(VERIFICATION_PAUSED_KEY)
+        if verification_paused:
+            items.append({
+                "key": "verification-paused", "tone": "warn",
+                "title": "Finding contacts is paused: no email-verification credits",
+                "detail": (f"{verification_paused}. It resumes by itself when they're back "
+                           "(Reoon's daily credits reset each day). Add ZeroBounce or Hunter "
+                           "in .env, or buy Reoon credits, to keep going."),
+                "action": "Open the log", "tab": "controls",
+            })
+
         from harvey.state import COUNTRY_HELD_KEY
         country_held = await state.get_setting(COUNTRY_HELD_KEY)
         if country_held:

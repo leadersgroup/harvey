@@ -47,7 +47,8 @@ from harvey.collectors.profile import _reads_like_title, looks_like_challenge
 from harvey.config import HarveyConfig, EnvConfig
 from harvey.integrations.email_finder import (
     DEFAULT_PATTERN, SMALL_BUSINESS_PATTERN, addresses_next_to_names, find_email,
-    infer_pattern_from_email, initials_fit, site_email_evidence, verify_published_address,
+    infer_pattern_from_email, initials_fit, reoon_ran_out, site_email_evidence,
+    verification_paused, verify_published_address,
 )
 from harvey.integrations.linkedin import LinkedInAutomation
 from harvey.models.company import Company
@@ -107,6 +108,8 @@ MAX_PROSPECTS_PER_CYCLE = 25
 RECHECK_GUESSES_PER_CYCLE = 5
 RECHECK_GUESS_TRIES = 3
 RECHECK_GUESS_KEY = "guess_recheck:"
+# Set (to the reason) while finding waits for verification credits.
+VERIFICATION_PAUSED_KEY = "verification_paused"
 
 # Hunter domain-searches per heartbeat. The monthly budget itself is shared
 # with email-pattern lookups and set by HUNTER_MONTHLY_SEARCHES (see
@@ -249,6 +252,19 @@ class Scout:
 
         prospects_found = 0
 
+        # No verifier credit: a contact found now could only be saved with an
+        # unconfirmed guess, which is never sent. Wait for the daily reset.
+        paused = await verification_paused(self.env)
+        if paused:
+            await self.state.set_setting(VERIFICATION_PAUSED_KEY, paused)
+            logger.info(f"Scout: not finding contacts: {paused}. Checking again next cycle.")
+            await self.state.log_action(action_type="prospect", agent="scout",
+                                        details={"prospects_found": 0, "paused": paused})
+            return
+        if await self.state.get_setting(VERIFICATION_PAUSED_KEY):
+            await self.state.delete_setting(VERIFICATION_PAUSED_KEY)
+            logger.info("Scout: verification credits are back; finding contacts again.")
+
         # Each strategy is isolated so one failing does not abort the cycle.
         strategies = []
         # Finish what's already found before finding more: contacts whose
@@ -280,6 +296,9 @@ class Scout:
         strategies.append(("company_discovery", self._prospect_via_company_discovery))
 
         for name, strategy in strategies:
+            if reoon_ran_out():
+                logger.info("Scout: Reoon ran out of credits mid-cycle; stopping until it resets.")
+                break
             try:
                 prospects_found += await strategy()
             except Exception as e:
@@ -721,6 +740,8 @@ class Scout:
         )
         count = 0
         for company in companies:
+            if reoon_ran_out():
+                break     # no credit left: the rest waits for the reset
             domain = (company.get("domain") or "").strip()
             if not domain:
                 continue
@@ -809,6 +830,8 @@ class Scout:
 
         count = 0
         for company in companies:
+            if reoon_ran_out():
+                break     # no credit left: the rest waits for the reset
             domain = (company.get("domain") or "").strip()
             if not domain:
                 continue
@@ -1039,6 +1062,8 @@ class Scout:
 
         all_contacts = []
         for company in companies:
+            if reoon_ran_out():
+                break     # no credit left: the rest waits for the reset
             domain = company["domain"]
             company_id = await self._ensure_company(
                 name=company.get("name") or self._domain_to_name(domain),

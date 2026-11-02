@@ -563,6 +563,57 @@ async def derive_pattern(
 
 # ── Verification channels ──
 
+# Set when Reoon refuses a check for want of credits; cleared once its
+# balance shows credits again (verification_paused).
+_REOON_EMPTY = {"empty": False}
+
+
+async def reoon_credits(api_key: str) -> Optional[int]:
+    """Daily plus instant credits left on the Reoon account, or None when
+    it can't be asked. Asking costs no credit."""
+    try:
+        async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
+            resp = await client.get(
+                "https://emailverifier.reoon.com/api/v1/check-account-balance/",
+                params={"key": api_key})
+        data = resp.json() if resp.status_code == 200 else None
+    except (httpx.HTTPError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    try:
+        return int(data.get("remaining_daily_credits") or 0) + \
+            int(data.get("remaining_instant_credits") or 0)
+    except (TypeError, ValueError):
+        return None
+
+
+async def verification_paused(env) -> str:
+    """Why finding and verifying emails should wait, or "" to go ahead.
+
+    Only Reoon's balance can be read, so this pauses only when Reoon is the
+    sole verifier configured and it has no credits left; its daily credits
+    come back on their own, and the next check sees them. With ZeroBounce
+    or Hunter also configured, one of those may still have credit."""
+    reoon = getattr(env, "reoon_api_key", "") if env else ""
+    others = (getattr(env, "zerobounce_api_key", "") if env else "") or _hunter_api_key()
+    if not reoon or others:
+        return ""
+    left = await reoon_credits(reoon)
+    if left is None:
+        return ""       # can't tell: don't stop on a hiccup
+    _REOON_EMPTY["empty"] = left <= 0
+    if not _REOON_EMPTY["empty"]:
+        return ""
+    return ("Reoon has no verification credits left; Harvey waits for its daily "
+            "credits instead of saving unconfirmed guesses")
+
+
+def reoon_ran_out() -> bool:
+    """Did a check this run come back "not enough credits"?"""
+    return _REOON_EMPTY["empty"]
+
+
 async def verify_reoon(email: str, api_key: str) -> Optional[dict]:
     """Reoon email-verifier — generous free tier, good catch-all flagging.
 
@@ -582,6 +633,9 @@ async def verify_reoon(email: str, api_key: str) -> Optional[dict]:
         logger.debug(f"Reoon request failed for {email}: {e}")
         return None
     if resp.status_code != 200:
+        if resp.status_code in (402, 403) and "credit" in (resp.text or "").lower():
+            # Out of credits: say so, so finding stops until the reset.
+            _REOON_EMPTY["empty"] = True
         return None
     try:
         data = resp.json()

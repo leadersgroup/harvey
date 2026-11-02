@@ -240,6 +240,10 @@ def cmd_status(args):
         rules_problem = await state.get_setting(EMAIL_RULES_PROBLEM_KEY)
         if rules_problem:
             print(f"  Writing:              STOPPED (writer.email_rules: {rules_problem})")
+        from harvey.agents.scout import VERIFICATION_PAUSED_KEY
+        if await state.get_setting(VERIFICATION_PAUSED_KEY):
+            print("  Finding contacts:     PAUSED (no email-verification credits; resumes "
+                  "when Reoon's daily credits reset)")
         from harvey.state import COUNTRY_HELD_KEY
         country_held = await state.get_setting(COUNTRY_HELD_KEY)
         if country_held:

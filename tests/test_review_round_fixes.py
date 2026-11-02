@@ -654,3 +654,42 @@ async def test_a_guess_is_tried_once_a_day(state):  # noqa: F811
     await scout._recheck_guesses()
     await scout._recheck_guesses()
     assert len(calls) == 1
+
+
+# ── no verification credits: finding waits for the reset ──
+
+@pytest.mark.asyncio
+async def test_finding_pauses_while_reoon_is_empty_and_resumes_after(monkeypatch):
+    from types import SimpleNamespace
+    from harvey.integrations import email_finder as ef
+    env = SimpleNamespace(reoon_api_key="k", zerobounce_api_key="")
+    monkeypatch.setattr(ef, "_hunter_api_key", lambda: "")
+    monkeypatch.setattr(ef, "_REOON_EMPTY", {"empty": False})
+    balance = {"left": 0}
+
+    async def credits(key):
+        return balance["left"]
+    monkeypatch.setattr(ef, "reoon_credits", credits)
+    assert "no verification credits" in await ef.verification_paused(env)
+    balance["left"] = 20
+    assert await ef.verification_paused(env) == ""
+    # A second verifier might still have credit: don't pause.
+    balance["left"] = 0
+    assert await ef.verification_paused(SimpleNamespace(reoon_api_key="k", zerobounce_api_key="z")) == ""
+
+
+@pytest.mark.asyncio
+async def test_the_scout_finds_nobody_while_paused(state, monkeypatch):  # noqa: F811
+    from types import SimpleNamespace
+    import harvey.agents.scout as scout_mod
+    from harvey.agents.scout import VERIFICATION_PAUSED_KEY, Scout
+
+    async def paused(env):
+        return "Reoon has no verification credits left"
+    monkeypatch.setattr(scout_mod, "verification_paused", paused)
+    scout = Scout.__new__(Scout)
+    scout.state, scout.env = state, None
+    scout.brain = SimpleNamespace(load_skills_for_agent=lambda a: "")
+    scout._recheck_guesses = None       # would raise if any strategy ran
+    await scout.run()
+    assert "no verification credits" in await state.get_setting(VERIFICATION_PAUSED_KEY)

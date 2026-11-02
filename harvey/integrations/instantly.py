@@ -269,20 +269,37 @@ class InstantlyClient:
         if not leads:
             logger.warning("add_leads called with an empty lead list; skipping.")
             return {}
-        result = None
+        merged: dict = {"created_emails": []}
         for start in range(0, len(leads), LEADS_PER_REQUEST):
+            batch = leads[start:start + LEADS_PER_REQUEST]
             result = await self._request(
                 "POST",
                 "/leads/add",
                 # Someone already in another of the user's campaigns isn't
                 # emailed twice.
-                {"campaign_id": campaign_id,
-                 "leads": leads[start:start + LEADS_PER_REQUEST],
-                 "skip_if_in_workspace": True},
+                {"campaign_id": campaign_id, "leads": batch, "skip_if_in_workspace": True},
             )
             if not isinstance(result, dict):
                 return None
-        return result
+            for key in ("leads_uploaded", "skipped_count", "in_blocklist", "invalid_email_count",
+                        "duplicate_email_count", "incomplete_count"):
+                if isinstance(result.get(key), int):
+                    merged[key] = merged.get(key, 0) + result[key]
+            created = result.get("created_leads")
+            if isinstance(created, list):
+                # Who Instantly actually took: by email, or by position in the batch.
+                for item in created:
+                    if not isinstance(item, dict):
+                        continue
+                    email = item.get("email")
+                    if not email and isinstance(item.get("index"), int) and item["index"] < len(batch):
+                        email = batch[item["index"]].get("email")
+                    if email:
+                        merged["created_emails"].append(email.strip().lower())
+            elif result.get("leads_uploaded") == len(batch) or "leads_uploaded" not in result:
+                # No per-lead list: every lead went in, or the API didn't say.
+                merged["created_emails"] += [lead["email"].strip().lower() for lead in batch]
+        return merged
 
     async def delete_lead(self, email: str) -> int | None:
         """Remove ``email`` from every campaign in the workspace, so nothing

@@ -502,3 +502,75 @@ async def test_a_spaced_name_matching_the_domain_is_not_weak(state):  # noqa: F8
     scout.state = state
     scout._read_site = None     # would raise if read
     assert await scout._better_name("x", "pryorwynn.example", "Pryor Wynn") == "Pryor Wynn"
+
+
+# ── leads Instantly skips (already in another of your campaigns) ──
+
+@pytest.mark.asyncio
+async def test_add_leads_reports_who_instantly_created():
+    client = _client({("POST", "/leads/add"): {
+        "leads_uploaded": 1, "skipped_count": 1,
+        "created_leads": [{"id": "x", "index": 1, "email": "bo@two.example"}]}})
+    result = await client.add_leads("c1", [{"email": "ann@one.example"}, {"email": "bo@two.example"}])
+    assert result["created_emails"] == ["bo@two.example"] and result["skipped_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_a_lead_instantly_skipped_is_not_marked_contacted(state):  # noqa: F811
+    from harvey.agents.sender import INSTANTLY_SKIPPED_KEY, Sender
+    from tests.test_outbox_native import Env
+    sender = Sender(brain=None, state=state, config=_cfg(provider="instantly", require_approval=False),
+                    env=Env())
+    taken = await seed_prospect(state, email="ann@one.example", status="queued")
+    elsewhere = await seed_prospect(state, email="bo@two.example", status="queued")
+    await _live_campaign(state, "Tax Law Firms-outreach", [taken, elsewhere])
+
+    async def get_campaign(campaign_id):
+        return {"id": campaign_id, "status": 1}
+
+    async def add_leads(campaign_id, leads):
+        return {"created_emails": ["ann@one.example"], "skipped_count": 1}
+
+    async def ok(*args, **kwargs):
+        return {}
+    sender.instantly.get_campaign = get_campaign
+    sender.instantly.add_leads = add_leads
+    sender.instantly.activate_campaign = ok
+    [campaign] = await state.get_campaigns_by_status("active")
+    await sender._deploy_campaign(campaign, top_up=True)
+    assert (await state.get_prospect(taken)).status == "contacted"
+    assert (await state.get_prospect(elsewhere)).status == "lost"
+    assert "another Instantly campaign" in await state.get_setting(INSTANTLY_SKIPPED_KEY + elsewhere)
+
+
+@pytest.mark.asyncio
+async def test_a_draft_with_no_lead_instantly_takes_fails_instead_of_blocking(state):  # noqa: F811
+    from harvey.agents.sender import Sender
+    from harvey.models.campaign import Campaign, EmailStep
+    from tests.test_outbox_native import Env
+    sender = Sender(brain=None, state=state, config=_cfg(provider="instantly", require_approval=False),
+                    env=Env())
+    pid = await seed_prospect(state, email="bo@two.example", status="queued")
+    await state.add_campaign(Campaign(id="", name="Tax Law Firms-outreach", channel="email",
+                                      status="draft", instantly_campaign_id="i9",
+                                      sequence=[EmailStep(step=1, subject="s", body="Hi {{first_name}}",
+                                                          delay_days=0)],
+                                      prospect_ids=[pid]))
+    deleted = []
+
+    async def ok(*args, **kwargs):
+        return {}
+
+    async def add_leads(campaign_id, leads):
+        return {"created_emails": [], "skipped_count": 1}
+
+    async def request(method, path, body=None, params=None):
+        deleted.append((method, path))
+        return {}
+    sender.instantly.set_campaign_emails = ok
+    sender.instantly.add_leads = add_leads
+    sender.instantly._request = request
+    [campaign] = await state.get_campaigns_by_status("draft")
+    await sender._deploy_campaign(campaign)
+    assert await state.get_campaigns_by_status("draft") == []
+    assert ("DELETE", "/campaigns/i9") in deleted

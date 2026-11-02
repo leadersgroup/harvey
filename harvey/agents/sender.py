@@ -77,6 +77,9 @@ def casual_company(name: str) -> str:
 # campaign is kept so it's only patched when it changes.
 INSTANTLY_ACTIVE = 1
 INSTANTLY_PAUSED = 2
+# Why Instantly didn't take a lead (already in another of your campaigns,
+# block-listed, refused), kept per prospect for the record.
+INSTANTLY_SKIPPED_KEY = "instantly_skipped:"
 # Every campaign Harvey makes in Instantly starts with this, so you can tell
 # them from your own there. Harvey's own records keep the plain name.
 INSTANTLY_PREFIX = "Harvey - "
@@ -337,6 +340,17 @@ class Sender:
                 logger.error(f"Sender: Failed to add leads to campaign {campaign.name}: {e}")
         await self._share_daily_limit()
 
+    async def _abandon(self, campaign, campaign_id: str, reason: str):
+        """A draft that can't go out: mark it failed, and delete the empty
+        campaign it left in Instantly so the user's list stays clean."""
+        logger.warning(f"Sender: '{campaign.name}' won't deploy ({reason}); marked failed.")
+        await self.state.update_campaign(campaign.id, status="failed")
+        if campaign_id:
+            try:
+                await self.instantly._request("DELETE", f"/campaigns/{campaign_id}", {})
+            except Exception as e:
+                logger.debug(f"Deleting empty Instantly campaign {campaign_id} failed: {e}")
+
     async def _has_queued(self, campaign) -> bool:
         """Prospects the Writer added to this live campaign, not yet uploaded."""
         for pid in campaign.prospect_ids:
@@ -585,6 +599,9 @@ class Sender:
                     logger.info(f"Sender: Campaign '{campaign.name}' activated on retry.")
                 return
             logger.warning(f"Sender: No valid prospects for campaign {campaign.name}")
+            # Left a draft, it would win every cycle's decision and starve
+            # writing and prospecting.
+            await self._abandon(campaign, campaign_id, "no prospect it may send to")
             return
 
         # Check remaining daily send budget
@@ -624,6 +641,32 @@ class Sender:
         if result is None:
             logger.error(f"Sender: Failed to add leads to campaign {campaign_id}")
             return
+
+        # Instantly skips anyone already in another campaign of the user's
+        # (skip_if_in_workspace), block-listed, or with an address it won't
+        # take. Only who it actually created is Harvey's contact; the rest
+        # leave Harvey's pipeline with the reason, rather than looking like
+        # Harvey is emailing them, or being retried every cycle.
+        created = set(result.get("created_emails") or []) if isinstance(result, dict) else set()
+        if isinstance(result, dict) and "created_emails" in result:
+            skipped = [p for p in prospects if p.email.strip().lower() not in created]
+            prospects = [p for p in prospects if p.email.strip().lower() in created]
+            if skipped:
+                reason = ", ".join(f"{result[k]} {label}" for k, label in (
+                    ("skipped_count", "already in another Instantly campaign"),
+                    ("in_blocklist", "on your Instantly block list"),
+                    ("invalid_email_count", "with an address Instantly refused"))
+                    if result.get(k)) or "not taken by Instantly"
+                logger.info(f"Sender: Instantly didn't add {len(skipped)} lead(s) to "
+                            f"'{campaign.name}': {reason}.")
+                for p in skipped:
+                    await self.state.update_prospect_status(p.id, "lost")
+                    await self.state.set_setting(INSTANTLY_SKIPPED_KEY + p.id, reason[:200])
+            leads = [lead for lead in leads if lead["email"] in created]
+            if not prospects:
+                if not top_up:
+                    await self._abandon(campaign, campaign_id, "Instantly took none of its leads")
+                return
 
         # Mark prospects as contacted BEFORE activation: if activation
         # succeeds but this write failed, a retry would re-add the same

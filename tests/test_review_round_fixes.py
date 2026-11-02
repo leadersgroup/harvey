@@ -584,3 +584,25 @@ async def test_a_draft_with_no_lead_instantly_takes_fails_instead_of_blocking(st
 ])
 def test_more_legal_forms_and_names_that_only_look_like_one(name, short):
     assert casual_company(name) == short
+
+
+# ── foreign and reference sites never become companies ──
+
+@pytest.mark.parametrize("domain", ["dict.cn", "corp.dict.cn", "iciba.com", "dict.eudic.net",
+                                    "zhuanlan.zhihu.com", "beian.gov.cn", "dictionary.cambridge.org",
+                                    "baike.baidu.com"])
+def test_dictionaries_and_registry_pages_are_junk(domain):
+    from harvey.collectors.discover import is_junk
+    assert is_junk(domain)
+
+
+@pytest.mark.parametrize("domain, name, outside", [
+    ("pryorlaw.cn", "Pryor Law", True), ("pryorlaw.co.uk", "Pryor Law", True),
+    ("pryorlaw.example", "欧路翻译", True), ("pryorlaw.co", "Pryor Law", False),
+    ("pryorlaw.law", "Pryor Law", False), ("pryorlaw.us", "Pryor Law", False),
+    ("pryorlaw.com", "Pryor Law", False),
+])
+def test_foreign_domains_and_scripts_are_outside_a_us_only_list(domain, name, outside):
+    from harvey.collectors.discover import outside_countries
+    assert outside_countries(domain, name, ["US"]) is outside
+    assert outside_countries(domain, name, []) is False       # no list, no filter

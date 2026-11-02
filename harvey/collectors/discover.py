@@ -71,6 +71,11 @@ JUNK_DOMAIN_PATTERNS = tuple(re.compile(p, re.I) for p in (
     r"(^|\.)(upcounsel|lawyers|attorneys|hg|lawyer|legalzoom|rocketlawyer|trustandwill)\.(com|org|net)$",
     # professional associations and member groups ("naela.org", "massnaela.com")
     r"(^|\.)(aarp|naela|[a-z]+naela|americanbar|[a-z]*statebar|[a-z]*barassociation)\.(org|com)$",
+    # dictionaries, translators and Q&A sites: a search word ("estate") finds
+    # its definition, not a firm; and the registry pages their footers link
+    r"(^|\.)(dict|dictionary|thesaurus|wiktionary|fanyi|translate|iciba|eudic|youdao|zhihu|baidu)\.",
+    r"(^|\.)(merriam-webster|collinsdictionary|vocabulary|wordreference|linguee|beian)\.",
+    r"(^|\.)dictionary\.cambridge\.org$",
     # media & reference
     r"(^|\.)(wikipedia|reddit|quora|medium|substack|forbes|inc|entrepreneur)\.",
     r"(^|\.)(sfgate|bizjournals|patch|nytimes|washingtonpost|usatoday|cnbc|cnn|businessinsider)\.",
@@ -117,6 +122,28 @@ JUNK_DOMAIN_PATTERNS = tuple(re.compile(p, re.I) for p in (
 ))
 
 # Names that mean the row is a category page or an aggregator, not a business.
+# Country-code domains a US business commonly uses for its own site.
+GLOBAL_CCTLDS = frozenset("us co io ai me tv ly gg cc ws fm am la ac to sh".split())
+# Letters of scripts other than Latin: a US firm's name is written in Latin.
+_NON_LATIN = re.compile(r"[\u0400-\u04FF\u0590-\u06FF\u0E00-\u0E7F\u3040-\u30FF\u3400-\u9FFF\uAC00-\uD7AF]")
+
+
+def outside_countries(domain: str, name: str, allowed) -> bool:
+    """True when a company can't be in the countries cold email goes to
+    (compliance.allowed_countries): a foreign country-code domain (.cn,
+    .uk; not .co or .io, which US firms use), or a name written in another
+    script. Nothing is excluded when no countries are set."""
+    allowed = {c.lower() for c in allowed or []}
+    if not allowed:
+        return False
+    tld = (domain or "").lower().rstrip(".").rsplit(".", 1)[-1]
+    if len(tld) == 2 and tld not in GLOBAL_CCTLDS | allowed | ({"uk"} if "gb" in allowed else set()):
+        return True
+    if "us" in allowed and len(allowed) == 1 and _NON_LATIN.search(name or ""):
+        return True
+    return False
+
+
 JUNK_NAME_PATTERNS = tuple(re.compile(p, re.I) for p in (
     r"^\s*(top|best|\d+)\s+\d*\s*(best\s+)?\w+.*\b(in|near|of)\b",
     r"\b(directory|listings?|reviews? of|compare|find a)\b",

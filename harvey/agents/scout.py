@@ -39,7 +39,8 @@ from bs4 import BeautifulSoup
 from harvey.brain import Brain
 from harvey.collectors import people as people_mod
 from harvey.collectors.discover import (  # noqa: F401
-    brand_name, looks_like_brand, looks_like_keyword, name_from_domain, site_name_from_html,
+    brand_name, is_junk, looks_like_brand, looks_like_keyword, name_from_domain,
+    outside_countries, site_name_from_html,
 )
 from harvey.collectors.profile import _reads_like_title, looks_like_challenge
 from harvey.config import HarveyConfig, EnvConfig
@@ -1067,6 +1068,8 @@ class Scout:
                 info["source_url"] = url
                 if not info.get("name"):
                     info["name"] = self._domain_to_name(domain)
+                if self._wrong_place(info) or is_junk(domain, info["name"]):
+                    continue
 
                 companies.append(info)
                 if len(companies) >= 5:
@@ -1101,6 +1104,9 @@ class Scout:
             results = await self._web_search(query)
 
             for url, snippet in results:
+                source = self._extract_domain(url)
+                if is_junk(source) or outside_countries(source, "", self._allowed_countries()):
+                    continue    # a dictionary's footer links aren't a directory
                 for domain in self._extract_company_domains_from_snippet(snippet, url):
                     if not self._is_candidate_domain(domain):
                         continue
@@ -1115,6 +1121,8 @@ class Scout:
                     info["source_url"] = url
                     if not info.get("name"):
                         info["name"] = self._domain_to_name(domain)
+                    if self._wrong_place(info) or is_junk(domain, info["name"]):
+                        continue
 
                     companies.append(info)
                     if len(companies) >= 5:
@@ -1142,9 +1150,21 @@ class Scout:
             return False
         if domain in self._seen_domains:
             return False
-        if self._is_noise_domain(domain):
+        if self._is_noise_domain(domain) or is_junk(domain):
+            return False
+        if outside_countries(domain, "", self._allowed_countries()):
             return False
         return True
+
+    def _allowed_countries(self) -> list[str]:
+        compliance = getattr(getattr(self, "config", None), "compliance", None)
+        return list(getattr(compliance, "allowed_countries", None) or [])
+
+    def _wrong_place(self, info: dict) -> bool:
+        """A scraped site that isn't a business in the countries you send to:
+        its name is in another script, or its domain is foreign."""
+        return outside_countries(info.get("domain", ""), info.get("name", ""),
+                                 self._allowed_countries())
 
     async def _scrape_directory_page(self, url: str) -> list[dict]:
         """Scrape a directory/list page for company links."""

@@ -43,6 +43,38 @@ PY
 fi
 echo "$NEW_COMMIT" > "$STAMP"
 
+# The Harvey -> Sellbird file move refuses to run while data/harvey.pid names a
+# live process. Nothing is running yet in a fresh container, and process ids
+# restart from 1, so a pidfile left by the previous container can match an
+# unrelated process here. Clear it before anything starts.
+rm -f "$HARVEY_HOME/data/harvey.pid"
+
+# If an earlier boot was stopped by that pidfile, Sellbird made a new, empty
+# sellbird.db while the real data stayed in harvey.db, and the move never
+# overwrites a file that exists. Set an empty one aside (never delete it) so
+# the move can bring harvey.db over.
+if [ -f "$HARVEY_HOME/data/harvey.db" ] && [ -f "$HARVEY_HOME/data/sellbird.db" ]; then
+  if python3 - "$HARVEY_HOME/data/sellbird.db" <<'PY'
+import sqlite3, sys
+con = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
+try:
+    rows = sum(con.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+               for t in ("companies", "prospects", "campaigns"))
+except sqlite3.Error:
+    rows = 1  # can't tell: leave it alone
+sys.exit(0 if rows == 0 else 1)
+PY
+  then
+    aside="$HARVEY_HOME/data/backups/sellbird.db.empty-$(date -u +%Y%m%dT%H%M%SZ)"
+    for ext in "" -wal -shm; do
+      [ -f "$HARVEY_HOME/data/sellbird.db$ext" ] && mv "$HARVEY_HOME/data/sellbird.db$ext" "$aside$ext"
+    done
+    echo "[railway] set aside an empty sellbird.db so harvey.db can be moved to it"
+  else
+    echo "[railway] WARNING: both harvey.db and sellbird.db hold data; leaving both. Compare them."
+  fi
+fi
+
 # Harvey keeps config, knowledge and state next to its package, so the code
 # lives on the volume too. Code is replaced from the image on every boot;
 # everything else on the volume is left alone.

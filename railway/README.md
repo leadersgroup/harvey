@@ -20,6 +20,9 @@ mounted at `/data`.
 | `HEARTBEAT_MINUTES` | Minutes between cycles, applied to the config on every boot (30). |
 | `QUIET_HOURS` | Hours Sellbird sleeps, as `17:00-09:00` in `usage.quiet_hours.timezone`, applied on every boot. |
 | `QUIET_WEEKENDS` | `1` to sleep all of Saturday and Sunday too, `0` to work weekends. |
+| `DASHBOARD_LOGIN_EMAIL` | The one email allowed to sign in to the dashboard. |
+| `DASHBOARD_LOGIN_PASSWORD_HASH` | Its starting password, as a hash from `python railway/login_server.py hash`. |
+| `LOGIN_SESSION_HOURS` | How long a sign-in lasts (12). |
 | `HARVEY_AUTORUN` | `1` starts the heartbeat loop at boot, so it resumes after a redeploy. Leave `0` until the old install is stopped. |
 | `BACKUP_GITHUB_REPO` | Private repository (`owner/name`) that receives a data snapshot two minutes after each start and every 24 hours (`BACKUP_HOURS`). |
 | `BACKUP_GITHUB_TOKEN` | Fine-grained GitHub token with Contents read/write on that repository only. |
@@ -92,3 +95,14 @@ explains how to restore. The log line to look for is
   may not apply. Harvey keeps working either way.
 - Mailboxes that sign in through a desktop keychain or a browser (Gmail or
   Microsoft OAuth, LinkedIn) do not carry over; Instantly and SMTP do.
+
+## Signing in
+
+The public dashboard sits behind a sign-in page (`railway/login_server.py`):
+open the domain, sign in with `DASHBOARD_LOGIN_EMAIL` and its password, and
+the dashboard opens already unlocked. `/_password` changes the password (it is
+then kept on the volume as `data/login-password` and the variable no longer
+applies) and signs out every other browser; `/_logout` signs out. Five wrong
+passwords from one address lock it for 15 minutes, twenty from anywhere lock
+everyone. Without both variables the dashboard refuses every request.
+`/_import` still uses only the dashboard token.

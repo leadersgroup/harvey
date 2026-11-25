@@ -42,6 +42,8 @@ caddy run --config "$RW/Caddyfile" --adapter caddyfile &
 pids+=($!)
 python "$RW/import_server.py" &
 pids+=($!)
+python "$RW/login_server.py" &
+pids+=($!)
 
 # The dashboard prints its unlock link for 127.0.0.1; show the public one.
 python -m "$PKG" dashboard 2>&1 \

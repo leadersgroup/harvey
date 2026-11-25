@@ -14,7 +14,11 @@
 		header Origin *
 		not header Origin {$PUBLIC_ORIGIN}
 	}
-	respond @foreign "Cross-origin requests are refused." 403
+	# A handle, not a bare respond: Caddy runs respond after handle blocks,
+	# so a bare respond here never fired.
+	handle @foreign {
+		respond "Cross-origin requests are refused." 403
+	}
 
 	# One-time data import (see railway/README.md); token-protected.
 	@import path /_import
@@ -25,7 +29,17 @@
 		reverse_proxy 127.0.0.1:5556
 	}
 
+	# Sign-in pages (railway/login_server.py). Everything below them needs a
+	# signed-in session; the dashboard's own token is still required as well.
+	@login path /_login /_logout /_password
+	handle @login {
+		reverse_proxy 127.0.0.1:5557
+	}
+
 	handle {
+		forward_auth 127.0.0.1:5557 {
+			uri /_auth/check
+		}
 		reverse_proxy 127.0.0.1:5555 {
 			header_up Host 127.0.0.1:5555
 			header_up Origin "^.*$" "http://127.0.0.1:5555"

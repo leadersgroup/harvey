@@ -19,6 +19,8 @@ mounted at `/data`.
 | `CLAUDE_CODE_OAUTH_TOKEN` | Claude Pro/Max sign-in. Create it on your own computer with `claude setup-token`. No API key is used; `ANTHROPIC_API_KEY` is ignored on purpose. |
 | `HEARTBEAT_MINUTES` | Minutes between cycles, applied to the config on every boot (30). |
 | `HARVEY_AUTORUN` | `1` starts the heartbeat loop at boot, so it resumes after a redeploy. Leave `0` until the old install is stopped. |
+| `BACKUP_GITHUB_REPO` | Private repository (`owner/name`) that receives a data snapshot two minutes after each start and every 24 hours (`BACKUP_HOURS`). |
+| `BACKUP_GITHUB_TOKEN` | Fine-grained GitHub token with Contents read/write on that repository only. |
 | `PUBLIC_ORIGIN` | Only for a custom domain, e.g. `https://harvey.example.com`. Defaults to the Railway domain. |
 
 ## Opening the dashboard
@@ -72,6 +74,14 @@ What protects the data during an upgrade:
 Upstream renamed the package from `harvey` to `sellbird`. The scripts here
 detect which one is present and handle both sets of file names; Sellbird
 itself renames the old config and database on first start.
+
+## Off-site backup
+
+`railway/backup.py` pushes the database, config, prompts and skills to the
+private repository above. `.env` is never included, only the names of its
+variables. Each snapshot replaces the last one. The repository's own README
+explains how to restore. The log line to look for is
+`[railway] backup: snapshot pushed to ...`.
 
 ## Limits
 

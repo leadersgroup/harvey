@@ -70,6 +70,10 @@ if [ "${HARVEY_AUTORUN:-0}" = "1" ]; then
   autorun &
 fi
 
+# Daily snapshot of the data to a private GitHub repository (see backup.py).
+# Not one of the core processes: a failed backup never restarts the service.
+python "$RW/backup.py" --loop &
+
 # Mirror the loop's log into Railway's log stream.
 touch "$LOG"
 tail -n 0 -F "$LOG" &

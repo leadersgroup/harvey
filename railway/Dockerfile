@@ -8,10 +8,10 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
-# curl: Claude CLI installer. libatomic1: needed by Playwright's bundled Node. caddy: public HTTPS front for the loopback-only
+# curl: Claude CLI installer. libatomic1: needed by Playwright's bundled Node. git: data backup. caddy: public HTTPS front for the loopback-only
 # dashboard. tini: PID 1 that forwards signals and reaps children.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl ca-certificates caddy tini libatomic1 \
+    curl ca-certificates caddy tini libatomic1 git \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/harvey

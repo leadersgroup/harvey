@@ -46,6 +46,33 @@ database is complete. Then, from inside the old Harvey folder:
 Leave out any file that does not exist. The container restarts on the
 imported data. To replace an existing setup add `-H "X-Overwrite: yes"`.
 
+## Upgrading Harvey's code
+
+The `railway` branch is `main` plus the `railway/` folder, `railway.json` and
+nothing else, so it never conflicts with Harvey's own files. Railway deploys
+every push to `railway`.
+
+1. Bring new code into `main` (your own commits, or a merge from upstream
+   `ethanplusai/harvey`), resolve any conflicts there and run the tests.
+2. Merge `main` into `railway` and push. Railway builds and deploys it.
+3. Watch the deploy log for `package:` and `commit:` and for the dashboard
+   link. If the build fails, compare `railway/Dockerfile` with the root
+   `Dockerfile`, which upstream updates when system packages change.
+
+What protects the data during an upgrade:
+
+- Config, `.env`, prompts, skills and `data/` live on the volume and are never
+  overwritten by a deploy; only the package code is replaced.
+- Whenever the deployed commit changes, the database is copied to
+  `data/backups/` before the new code starts. The newest three are kept and
+  the log names each one.
+- To go back: roll the deployment back in Railway, set `RESTORE_BACKUP` to the
+  backup's file name from the log, redeploy, then remove the variable.
+
+Upstream renamed the package from `harvey` to `sellbird`. The scripts here
+detect which one is present and handle both sets of file names; Sellbird
+itself renames the old config and database on first start.
+
 ## Limits
 
 - The Claude token from `setup-token` can only run model requests, so the

@@ -1,0 +1,20 @@
+# Build context for railway/Dockerfile only (BuildKit prefers this file over
+# the root .dockerignore). Kept here so the root file is never edited and
+# upstream merges stay conflict-free. Lists both the old (harvey) and new
+# (sellbird) layouts; whichever exists is copied.
+**
+!requirements.txt
+!harvey.yaml
+!sellbird.yaml
+!harvey/
+!harvey/**
+!sellbird/
+!sellbird/**
+!prompts/
+!prompts/**
+!skills/
+!skills/**
+!railway/
+!railway/**
+**/__pycache__
+**/*.pyc

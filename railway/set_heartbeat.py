@@ -1,8 +1,8 @@
 """Set usage.heartbeat_interval_minutes from HEARTBEAT_MINUTES on every boot.
 
 Edits the text in place (no YAML round-trip) so comments and layout survive.
-Both config files are updated because harvey.local.yaml replaces harvey.yaml
-when it exists.
+Every config file present is updated, because the .local.yaml one replaces
+the default when it exists, and the names changed with the sellbird rename.
 """
 import os
 import re
@@ -35,7 +35,7 @@ def main() -> int:
         print(f"[railway] HEARTBEAT_MINUTES={raw!r} is not a whole number of minutes; ignored")
         return 0
     home = Path(os.environ.get("HARVEY_HOME", "."))
-    for name in ("harvey.yaml", "harvey.local.yaml"):
+    for name in ("harvey.yaml", "harvey.local.yaml", "sellbird.yaml", "sellbird.local.yaml"):
         path = home / name
         if not path.is_file():
             continue

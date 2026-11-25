@@ -7,6 +7,8 @@ export PYTHONPATH="$HARVEY_HOME"
 export PATH="/home/harvey/.local/bin:$PATH"
 export PORT="${PORT:-8080}"
 RW=/opt/harvey/railway
+PKG="${HARVEY_PKG:-harvey}"
+LOG="data/$PKG.log"
 
 if [ -n "${PUBLIC_ORIGIN:-}" ]; then
   :
@@ -42,16 +44,16 @@ python "$RW/import_server.py" &
 pids+=($!)
 
 # The dashboard prints its unlock link for 127.0.0.1; show the public one.
-python -m harvey dashboard 2>&1 \
+python -m "$PKG" dashboard 2>&1 \
   | sed -u "s#http://127\.0\.0\.1:5555/#$PUBLIC_ORIGIN/#" &
 pids+=($!)
 
 autorun() {
   local tries=0 code
   while [ "$tries" -lt 20 ]; do
-    if python -c "import sys; from harvey.main import _needs_setup; sys.exit(1 if _needs_setup() else 0)"; then
+    if python -c "import sys, importlib; sys.exit(1 if importlib.import_module('$PKG.main')._needs_setup() else 0)"; then
       echo "[railway] starting the heartbeat loop"
-      python -m harvey run >> data/harvey.log 2>&1
+      python -m "$PKG" run >> "$LOG" 2>&1
       code=$?
       echo "[railway] heartbeat loop exited with code $code"
       # A stop from the dashboard is a normal exit; leave it stopped.
@@ -69,8 +71,8 @@ if [ "${HARVEY_AUTORUN:-0}" = "1" ]; then
 fi
 
 # Mirror the loop's log into Railway's log stream.
-touch data/harvey.log
-tail -n 0 -F data/harvey.log &
+touch "$LOG"
+tail -n 0 -F "$LOG" &
 
 trap 'kill "${pids[@]}" 2>/dev/null; exit 1' TERM INT
 wait -n "${pids[@]}"

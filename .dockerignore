@@ -10,7 +10,5 @@
 !prompts/**
 !skills/
 !skills/**
-!railway/
-!railway/**
 **/__pycache__
 **/*.pyc

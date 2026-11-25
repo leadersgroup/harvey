@@ -25,11 +25,10 @@ RUN groupadd --gid 1000 harvey \
     && useradd --create-home --uid 1000 --gid 1000 harvey \
     && chown -R harvey:harvey /opt/harvey /ms-playwright
 
-COPY --chown=harvey:harvey harvey/ harvey/
-COPY --chown=harvey:harvey prompts/ prompts/
-COPY --chown=harvey:harvey skills/ skills/
-COPY --chown=harvey:harvey harvey.yaml .
-COPY --chown=harvey:harvey railway/ railway/
+# Everything railway/Dockerfile.dockerignore lets through: the package
+# (harvey/, and sellbird/ after the upstream rename), prompts, skills, the
+# default config and railway/.
+COPY --chown=harvey:harvey . .
 RUN chmod +x railway/entrypoint.sh railway/run.sh
 
 # Claude Code CLI, installed as the runtime user; fail the build if Harvey's
@@ -40,7 +39,7 @@ RUN installer="$(mktemp)" \
     && curl -fsSL https://claude.ai/install.sh -o "$installer" \
     && bash "$installer" \
     && rm "$installer" \
-    && python -c "from harvey.claude_runtime import check_cli; print(check_cli())"
+    && python -c "import importlib, os; pkg = 'sellbird' if os.path.isdir('sellbird') else 'harvey'; print(importlib.import_module(pkg + '.claude_runtime').check_cli())"
 
 # The entrypoint starts as root only to prepare the volume (Railway mounts it
 # root-owned), then drops to the harvey user for everything else.

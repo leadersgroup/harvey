@@ -31,9 +31,12 @@ HOME = Path(os.environ.get("HARVEY_HOME", ".")).resolve()
 TOKEN_FILE = HOME / "data" / "dashboard-token"
 MAX_BYTES = 2 * 1024 ** 3
 
-TOP_FILES = {".env", "harvey.yaml", "harvey.local.yaml", "linkedin_cookies.json"}
+TOP_FILES = {".env", "harvey.yaml", "harvey.local.yaml", "sellbird.yaml",
+             "sellbird.local.yaml", "linkedin_cookies.json"}
 TOP_DIRS = {"data", "prompts", "skills"}
-SKIP_DATA = {"dashboard-token", "agent-token", "harvey.pid", "harvey.lock", "harvey.log"}
+SKIP_DATA = {"dashboard-token", "agent-token", "dashboard.json", ".deployed-commit",
+             "backups", "harvey.pid", "harvey.lock", "harvey.log",
+             "sellbird.pid", "sellbird.lock", "sellbird.log"}
 SKIP_PARTS = {"__pycache__", ".git", ".venv", "venv", ".DS_Store"}
 
 _busy = threading.Lock()
@@ -57,7 +60,7 @@ def wanted(member: tarfile.TarInfo) -> PurePosixPath | None:
         return None
     if top not in TOP_DIRS:
         return None
-    if top == "data" and len(parts) == 2 and parts[1] in SKIP_DATA:
+    if top == "data" and parts[1] in SKIP_DATA:
         return None
     return PurePosixPath(*parts)
 
@@ -70,9 +73,10 @@ def do_import(archive: Path) -> list[str]:
         if ".env" not in names:
             raise ValueError("the archive has no .env at its top level; "
                              "create it from inside the Harvey folder")
-        if "data/harvey.db" in names:
-            for suffix in ("-wal", "-shm"):
-                (HOME / "data" / f"harvey.db{suffix}").unlink(missing_ok=True)
+        for db in ("harvey.db", "sellbird.db"):
+            if f"data/{db}" in names:
+                for suffix in ("-wal", "-shm"):
+                    (HOME / "data" / f"{db}{suffix}").unlink(missing_ok=True)
         for member, rel in members:
             if rel is None:
                 continue

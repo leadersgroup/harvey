@@ -19,6 +19,7 @@ from sellbird.pidfile import (
     LOCK_FILE, hold_loop_lock, read_pid, release_loop_lock, remove_pid_file, write_pid_file,
 )
 from sellbird.agents.writer import NOTHING_TO_WRITE
+from sellbird.collectors.phones import run_phone_stage
 from sellbird.pipeline import run_profile_stage
 from sellbird.state import StateManager
 
@@ -432,6 +433,10 @@ async def heartbeat(stop_event: asyncio.Event | None = None):
             # turns a name and a domain into something worth writing about.
             if summary.get("unprofiled", 0):
                 tasks.append(("profile", run_profile_stage(state, limit=25, config=config)))
+
+            # Phone numbers ride along the same way: one or two HTTP requests
+            # per firm, no model call. Returns at once when none are pending.
+            tasks.append(("phones", run_phone_stage(state, limit=30)))
 
             outcomes = await _run_agents(tasks)
             if action == "write_campaign" and outcomes.get("write_campaign") == NOTHING_TO_WRITE:

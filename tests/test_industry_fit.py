@@ -3,7 +3,7 @@ ICP's industries: not the vendors, newspapers or banks a search also finds."""
 
 import pytest
 
-from harvey.collectors.fit import families, industry_fit
+from sellbird.collectors.fit import families, industry_fit
 
 ICP = ["Estate Planning Law Firms", "Tax Law Firms", "Financial Advisory & Wealth Management Firms"]
 
@@ -42,7 +42,7 @@ def test_the_families_come_from_the_icp():
 @pytest.mark.asyncio
 async def test_the_scout_contacts_nobody_at_a_vendor():
     from types import SimpleNamespace
-    from harvey.agents.scout import Scout
+    from sellbird.agents.scout import Scout
     scout = Scout.__new__(Scout)
     scout.config = SimpleNamespace(icp=SimpleNamespace(industries=ICP))
     looked_for_people = []

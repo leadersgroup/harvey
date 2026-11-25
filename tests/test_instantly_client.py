@@ -2,7 +2,7 @@
 
 import pytest
 
-from harvey.integrations.instantly import (
+from sellbird.integrations.instantly import (
     InstantlyClient, instantly_steps, instantly_timezone, text_to_html,
 )
 

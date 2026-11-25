@@ -1,10 +1,10 @@
-"""Firm phone numbers read from the firm's own site (harvey/collectors/phones.py)."""
+"""Firm phone numbers read from the firm's own site (sellbird/collectors/phones.py)."""
 
 import pytest
 
-from harvey.collectors import phones
-from harvey.collectors.phones import best_phone, normalize, phones_on_page
-from harvey.state import Company, Prospect, StateManager
+from sellbird.collectors import phones
+from sellbird.collectors.phones import best_phone, normalize, phones_on_page
+from sellbird.state import Company, Prospect, StateManager
 
 
 @pytest.mark.parametrize("raw,expected", [
@@ -114,7 +114,7 @@ async def test_stage_saves_firm_number_and_copies_it_to_contacts(tmp_path, monke
         "https://contactlaw.com/contact": "<p>Office 713-555-2020 | Fax 713-555-2021</p>",
         "quietlaw.com": "<p>Welcome</p>",
     })
-    import harvey.collectors.profile as profile
+    import sellbird.collectors.profile as profile
     monkeypatch.setattr(profile, "ProfileCollector", lambda *a, **k: fake)
     async def no_sleep(*_): return None
     monkeypatch.setattr(phones.asyncio, "sleep", no_sleep)

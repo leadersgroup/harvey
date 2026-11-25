@@ -10,9 +10,13 @@
 	# Harvey refuses cross-origin browser requests by comparing Origin with its
 	# own loopback origin. The rewrite below would defeat that check, so the
 	# same rule is enforced here first, against the public origin.
+	# Pages here use referrer policy no-referrer, so browsers send
+	# "Origin: null" on their own POSTs; Sec-Fetch-Site, which a page can't
+	# forge, still says same-origin for those.
 	@foreign {
 		header Origin *
 		not header Origin {$PUBLIC_ORIGIN}
+		not header Sec-Fetch-Site same-origin
 	}
 	# A handle, not a bare respond: Caddy runs respond after handle blocks,
 	# so a bare respond here never fired.

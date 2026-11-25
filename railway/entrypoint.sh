@@ -64,6 +64,11 @@ for dir in prompts skills; do
   cp -r --update=none "$SRC/$dir/." "$HARVEY_HOME/$dir/"
 done
 
+# The dashboard's setup checklist only looks for a .venv folder. The image
+# already has every dependency installed, so mark that step as done.
+mkdir -p "$HARVEY_HOME/.venv"
+[ -e "$HARVEY_HOME/.venv/README" ] || echo "Placeholder: dependencies are installed in the Railway image." > "$HARVEY_HOME/.venv/README"
+
 # Keep the loop's log from filling the volume.
 for LOG in "$HARVEY_HOME"/data/harvey.log "$HARVEY_HOME"/data/sellbird.log; do
   if [ -f "$LOG" ] && [ "$(stat -c %s "$LOG")" -gt 52428800 ]; then

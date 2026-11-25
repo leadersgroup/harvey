@@ -202,9 +202,9 @@ def page(title: str, body: str) -> bytes:
 
 def login_page(msg: str = "") -> bytes:
     note = f"<div class=msg>{html.escape(msg)}</div>" if msg else ""
-    return page("Sign in · Sellbird", f"""
+    return page("Sign in · Harvey", f"""
 <form method=post action=/_login>
-  <h1>Sellbird dashboard</h1>{note}
+  <h1>Harvey dashboard</h1>{note}
   <label>Email<input name=email type=email autocomplete=username required autofocus></label>
   <label>Password<input name=password type=password autocomplete=current-password required></label>
   <button>Sign in</button>
@@ -213,7 +213,7 @@ def login_page(msg: str = "") -> bytes:
 
 def password_page(msg: str = "", ok: bool = False) -> bytes:
     note = f"<div class='msg{' ok' if ok else ''}'>{html.escape(msg)}</div>" if msg else ""
-    return page("Change password · Sellbird", f"""
+    return page("Change password · Harvey", f"""
 <form method=post action=/_password>
   <h1>Change password</h1>{note}
   <label>Current password<input name=current type=password autocomplete=current-password required></label>

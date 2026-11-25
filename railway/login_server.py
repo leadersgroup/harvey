@@ -1,8 +1,10 @@
 """Sign-in page in front of the dashboard on Railway.
 
 Caddy asks this server about every dashboard request (forward_auth to
-/_auth/check). Without a valid session cookie, a page load is sent to
-/_login and anything else gets 401. Signing in sets the cookie and opens the
+/_auth/check). A request passes with a valid session cookie, or with the
+dashboard token as a bearer token (the dashboard's API calls send no
+cookies, and the token is only handed out at sign-in). Otherwise a page load
+is sent to /_login and anything else gets 401. Signing in sets the cookie and opens the
 dashboard already unlocked, so the token link is no longer needed.
 
 One account. Its email comes from DASHBOARD_LOGIN_EMAIL; its password hash
@@ -276,7 +278,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = self.path.split("?", 1)[0]
         if path == "/_auth/check":
-            if self._user():
+            # The dashboard's own API calls send no cookies (credentials:
+            # 'omit'), only its token, which this page hands out at sign-in.
+            if self._user() or self._has_dashboard_token():
                 return self._send(204)
             accept = self.headers.get("Accept", "")
             method = self.headers.get("X-Forwarded-Method", "GET")
@@ -306,6 +310,18 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/_password":
             return self._change_password()
         return self._send(404, page("Not found", "<p>Not found.</p>"))
+
+    def _has_dashboard_token(self) -> bool:
+        if not configured():
+            return False
+        auth = self.headers.get("Authorization", "")
+        if not auth.startswith("Bearer "):
+            return False
+        try:
+            token = TOKEN_FILE.read_text().strip()
+        except OSError:
+            return False
+        return bool(token) and hmac.compare_digest(auth[7:].strip().encode(), token.encode())
 
     def _open_dashboard(self, cookie: str | None = None) -> None:
         try:

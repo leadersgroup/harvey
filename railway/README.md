@@ -100,7 +100,8 @@ explains how to restore. The log line to look for is
 
 The public dashboard sits behind a sign-in page (`railway/login_server.py`):
 open the domain, sign in with `DASHBOARD_LOGIN_EMAIL` and its password, and
-the dashboard opens already unlocked. `/_password` changes the password (it is
+the dashboard opens already unlocked. Its API calls pass with the dashboard
+token it was given at sign-in (they send no cookies). `/_password` changes the password (it is
 then kept on the volume as `data/login-password` and the variable no longer
 applies) and signs out every other browser; `/_logout` signs out. Five wrong
 passwords from one address lock it for 15 minutes, twenty from anywhere lock

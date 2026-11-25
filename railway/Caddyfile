@@ -29,6 +29,16 @@
 		reverse_proxy 127.0.0.1:5556
 	}
 
+	# Railway's health check: is the dashboard answering? It gets only the
+	# page shell, which holds no data, and needs no sign-in.
+	@health path /_health
+	handle @health {
+		rewrite * /
+		reverse_proxy 127.0.0.1:5555 {
+			header_up Host 127.0.0.1:5555
+		}
+	}
+
 	# Sign-in pages (railway/login_server.py). Everything below them needs a
 	# signed-in session; the dashboard's own token is still required as well.
 	@login path /_login /_logout /_password

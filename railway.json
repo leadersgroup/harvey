@@ -5,7 +5,7 @@
     "dockerfilePath": "railway/Dockerfile"
   },
   "deploy": {
-    "healthcheckPath": "/",
+    "healthcheckPath": "/_health",
     "healthcheckTimeout": 180,
     "restartPolicyType": "ALWAYS"
   }

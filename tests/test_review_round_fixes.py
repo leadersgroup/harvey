@@ -6,10 +6,10 @@ daily limit shared so the total stays inside max_daily_sends."""
 import pytest
 from bs4 import BeautifulSoup
 
-from harvey.agents.scout import ROLE_WORD_RE, looks_like_brand, published_location
-from harvey.agents.sender import casual_company
-from harvey.collectors.people import find_people, split_person_name
-from harvey.integrations.instantly import InstantlyClient
+from sellbird.agents.scout import ROLE_WORD_RE, looks_like_brand, published_location
+from sellbird.agents.sender import casual_company
+from sellbird.collectors.people import find_people, split_person_name
+from sellbird.integrations.instantly import InstantlyClient
 from tests.test_outbox_native import seed_prospect, state  # noqa: F401  (fixture)
 
 
@@ -92,7 +92,7 @@ def test_a_practice_area_is_not_a_job_title():
 
 @pytest.mark.asyncio
 async def test_a_colleague_mid_sequence_holds_the_next_contact(state):  # noqa: F811
-    from harvey.models.company import Company
+    from sellbird.models.company import Company
     cid = await state.add_company(Company(name="Acme", domain="acme.example"))
     first = await seed_prospect(state, email="ann@acme.example", status="contacted")
     second = await seed_prospect(state, email="bo@acme.example")
@@ -132,8 +132,8 @@ async def test_delete_lead_sends_a_body_and_only_deletes_that_address():
 
 @pytest.mark.asyncio
 async def test_the_daily_limit_is_shared_across_live_campaigns(state):  # noqa: F811
-    from harvey.agents.sender import Sender
-    from harvey.models.campaign import Campaign, EmailStep
+    from sellbird.agents.sender import Sender
+    from sellbird.models.campaign import Campaign, EmailStep
     from tests.test_outbox_native import Env
     sender = Sender(brain=None, state=state, config=_cfg(provider="instantly"), env=Env())
     for i in range(5):
@@ -160,8 +160,8 @@ async def test_the_daily_limit_is_shared_across_live_campaigns(state):  # noqa: 
 
 def test_native_sends_fill_instantlys_sender_tag_with_the_persona():
     from types import SimpleNamespace
-    from harvey.agents.sender import Sender
-    from harvey.models.prospect import Prospect
+    from sellbird.agents.sender import Sender
+    from sellbird.models.prospect import Prospect
     sender = Sender.__new__(Sender)
     sender.config = SimpleNamespace(persona=SimpleNamespace(name="Pat Example"))
     p = Prospect(first_name="Jo", last_name="Doe", company="Acme, LLC", title="Owner",
@@ -173,13 +173,13 @@ def test_native_sends_fill_instantlys_sender_tag_with_the_persona():
 # ── Instantly: "Harvey - " names, and one live campaign per group ──
 
 def test_instantly_names_start_with_harvey():
-    from harvey.agents.sender import instantly_name
+    from sellbird.agents.sender import instantly_name
     assert instantly_name("Tax Law Firms-outreach") == "Harvey - Tax Law Firms-outreach"
     assert instantly_name("Harvey - Tax Law Firms-outreach") == "Harvey - Tax Law Firms-outreach"
 
 
 async def _live_campaign(state, name, prospect_ids, instantly_id="i1"):
-    from harvey.models.campaign import Campaign, EmailStep
+    from sellbird.models.campaign import Campaign, EmailStep
     return await state.add_campaign(Campaign(
         id="", name=name, channel="email", status="active", instantly_campaign_id=instantly_id,
         sequence=[EmailStep(step=1, subject="s", body="Hi {{first_name}}", delay_days=0)],
@@ -188,7 +188,7 @@ async def _live_campaign(state, name, prospect_ids, instantly_id="i1"):
 
 @pytest.mark.asyncio
 async def test_new_prospects_join_the_live_campaign_for_their_group(state):  # noqa: F811
-    from harvey.agents.writer import Writer
+    from sellbird.agents.writer import Writer
     first = await seed_prospect(state, email="ann@one.example", status="contacted")
     cid = await _live_campaign(state, "Tax Law Firms-outreach", [first])
     newcomer = await state.get_prospect(await seed_prospect(state, email="bo@two.example"))
@@ -202,7 +202,7 @@ async def test_new_prospects_join_the_live_campaign_for_their_group(state):  # n
 
 @pytest.mark.asyncio
 async def test_a_top_up_uploads_only_the_newcomers_and_keeps_the_emails(state):  # noqa: F811
-    from harvey.agents.sender import Sender
+    from sellbird.agents.sender import Sender
     from tests.test_outbox_native import Env
     cfg = _cfg(provider="instantly", require_approval=False)
     sender = Sender(brain=None, state=state, config=cfg, env=Env())
@@ -233,7 +233,7 @@ async def test_a_top_up_uploads_only_the_newcomers_and_keeps_the_emails(state): 
 
 @pytest.mark.asyncio
 async def test_a_campaign_you_paused_in_instantly_gets_no_new_leads(state):  # noqa: F811
-    from harvey.agents.sender import Sender
+    from sellbird.agents.sender import Sender
     from tests.test_outbox_native import Env
     cfg = _cfg(provider="instantly", require_approval=False)
     sender = Sender(brain=None, state=state, config=cfg, env=Env())
@@ -258,7 +258,7 @@ async def test_a_campaign_you_paused_in_instantly_gets_no_new_leads(state):  # n
 # ── email: a guess with no evidence that bounces gets two more tries ──
 
 async def _find(monkeypatch, verdicts, source="default"):
-    from harvey.integrations import email_finder as ef
+    from sellbird.integrations import email_finder as ef
     checked = []
 
     async def mx(domain):
@@ -300,7 +300,7 @@ async def test_a_pattern_with_evidence_is_not_second_guessed(monkeypatch):
 
 def test_request_urls_with_api_keys_are_not_logged():
     import logging
-    import harvey.main  # noqa: F401  (configures logging)
+    import sellbird.main  # noqa: F401  (configures logging)
     assert logging.getLogger("httpx").getEffectiveLevel() >= logging.WARNING
 
 
@@ -310,8 +310,8 @@ async def test_a_writer_with_everyone_held_back_says_so(state):  # noqa: F811
     choosing to write every cycle with nothing it may write."""
     import aiosqlite
     from types import SimpleNamespace
-    from harvey.agents.writer import NOTHING_TO_WRITE, Writer
-    from harvey.models.company import Company
+    from sellbird.agents.writer import NOTHING_TO_WRITE, Writer
+    from sellbird.models.company import Company
     cid = await state.add_company(Company(name="Acme", domain="acme.example"))
     await seed_prospect(state, email="ann@acme.example", status="contacted")
     await seed_prospect(state, email="bo@acme.example")
@@ -329,20 +329,20 @@ async def test_a_writer_with_everyone_held_back_says_so(state):  # noqa: F811
                                     "lawyers.findlaw.com", "attorneys.superlawyers.com",
                                     "bestlawyers.com", "aarp.org", "naela.org", "massnaela.com"])
 def test_directories_news_and_associations_are_junk(domain):
-    from harvey.collectors.discover import is_junk
+    from sellbird.collectors.discover import is_junk
     assert is_junk(domain)
 
 
 @pytest.mark.parametrize("domain", ["pryorlawyers.example", "yourelderlawyers.example",
                                     "trustandestateslawyers.example", "patchettlaw.example"])
 def test_firms_with_lawyers_in_the_domain_are_not(domain):
-    from harvey.collectors.discover import is_junk
+    from sellbird.collectors.discover import is_junk
     assert not is_junk(domain)
 
 
 def test_a_tagline_in_og_site_name_is_dropped():
     from bs4 import BeautifulSoup  # noqa: F401
-    from harvey.collectors.discover import business_name
+    from sellbird.collectors.discover import business_name
     assert business_name("Pryor Law Firm | Boutique Law Firm Serving NY, NJ & AZ",
                          "pryorlawfirm.example") == "Pryor Law Firm"
 
@@ -360,14 +360,14 @@ PEOPLE = [("Mara", "Hollis"), ("Dana", "Pryor"), ("Theo", "Brightwater")]
 
 
 def test_an_address_printed_under_a_name_is_theirs():
-    from harvey.integrations.email_finder import addresses_next_to_names
+    from sellbird.integrations.email_finder import addresses_next_to_names
     tied = addresses_next_to_names([TEAM_PAGE], PEOPLE, "hollislaw.example")
     assert sorted(tied) == [("dkp@hollislaw.example", "Dana", "Pryor"),
                             ("mjh@hollislaw.example", "Mara", "Hollis")]
 
 
 def test_an_address_that_does_not_fit_the_name_above_is_not_tied():
-    from harvey.integrations.email_finder import addresses_next_to_names
+    from sellbird.integrations.email_finder import addresses_next_to_names
     page = "<h3>Dana Pryor</h3><p>Associate</p><p>zq@hollislaw.example</p>"
     assert addresses_next_to_names([page], PEOPLE, "hollislaw.example") == []
 
@@ -375,13 +375,13 @@ def test_an_address_that_does_not_fit_the_name_above_is_not_tied():
 @pytest.mark.parametrize("local, ok", [("mjh", True), ("mh", True), ("mjhj", True), ("mxyz", False),
                                        ("jmh", False), ("m", False), ("mara", False)])
 def test_initials_fit(local, ok):
-    from harvey.integrations.email_finder import initials_fit
+    from sellbird.integrations.email_finder import initials_fit
     assert initials_fit(local, "Mara", "Hollis") is ok
 
 
 @pytest.mark.asyncio
 async def test_a_published_address_is_used_and_nobody_else_is_guessed(monkeypatch):
-    from harvey.integrations import email_finder as ef
+    from sellbird.integrations import email_finder as ef
     checked = []
 
     async def mx(domain):
@@ -405,7 +405,7 @@ async def test_a_published_address_is_used_and_nobody_else_is_guessed(monkeypatc
 
 
 def test_a_search_phrase_is_not_a_company_name():
-    from harvey.collectors.discover import business_name
+    from sellbird.collectors.discover import business_name
     assert business_name("Texas sales tax attorney near me | Pryor Tax Law",
                          "pryortax.example") == "Pryor Tax Law"
 
@@ -416,7 +416,7 @@ def test_document_page_words_are_not_a_person():
 
 @pytest.mark.asyncio
 async def test_one_failed_round_of_retries_is_enough_for_a_domain(monkeypatch):
-    from harvey.integrations import email_finder as ef
+    from sellbird.integrations import email_finder as ef
     monkeypatch.setattr(ef, "_RETRIES_FAILED", set())
     checked = []
 
@@ -441,8 +441,8 @@ async def test_one_failed_round_of_retries_is_enough_for_a_domain(monkeypatch):
 @pytest.mark.asyncio
 async def test_the_decision_maker_is_written_to_before_a_paralegal(state):  # noqa: F811
     import aiosqlite
-    from harvey.agents.writer import Writer
-    from harvey.models.company import Company
+    from sellbird.agents.writer import Writer
+    from sellbird.models.company import Company
     cid = await state.add_company(Company(name="Acme", domain="acme.example"))
     await seed_prospect(state, email="pat@acme.example")
     await seed_prospect(state, email="mara@acme.example")
@@ -463,12 +463,12 @@ async def test_the_decision_maker_is_written_to_before_a_paralegal(state):  # no
     ("First Republic Law", False), ("Brightwater Wealth Partners", False),
 ])
 def test_search_keywords_and_slogans_are_not_names(name, keyword):
-    from harvey.collectors.discover import looks_like_keyword
+    from sellbird.collectors.discover import looks_like_keyword
     assert looks_like_keyword(name) is keyword
 
 
 def test_brand_name_prefers_the_declared_name_over_a_keyword_title():
-    from harvey.collectors.discover import brand_name
+    from sellbird.collectors.discover import brand_name
     html = ('<meta property="og:site_name" content="Brightwater Law PLC">'
             '<title>Springfield Tax Attorneys | Brightwater Law PLC</title>')
     assert brand_name(html, "springfieldtax.example") == "Brightwater Law PLC"
@@ -478,8 +478,8 @@ def test_brand_name_prefers_the_declared_name_over_a_keyword_title():
 
 @pytest.mark.asyncio
 async def test_backfill_renames_a_squashed_name_from_the_homepage(state):  # noqa: F811
-    from harvey.agents.scout import Scout
-    from harvey.models.company import Company
+    from sellbird.agents.scout import Scout
+    from sellbird.models.company import Company
     cid = await state.add_company(Company(name="Pryorwynn", domain="pryorwynn.example"))
     scout = Scout.__new__(Scout)
     scout.state = state
@@ -497,7 +497,7 @@ async def test_backfill_renames_a_squashed_name_from_the_homepage(state):  # noq
 
 @pytest.mark.asyncio
 async def test_a_spaced_name_matching_the_domain_is_not_weak(state):  # noqa: F811
-    from harvey.agents.scout import Scout
+    from sellbird.agents.scout import Scout
     scout = Scout.__new__(Scout)
     scout.state = state
     scout._read_site = None     # would raise if read
@@ -517,7 +517,7 @@ async def test_add_leads_reports_who_instantly_created():
 
 @pytest.mark.asyncio
 async def test_a_lead_instantly_skipped_is_not_marked_contacted(state):  # noqa: F811
-    from harvey.agents.sender import INSTANTLY_SKIPPED_KEY, Sender
+    from sellbird.agents.sender import INSTANTLY_SKIPPED_KEY, Sender
     from tests.test_outbox_native import Env
     sender = Sender(brain=None, state=state, config=_cfg(provider="instantly", require_approval=False),
                     env=Env())
@@ -545,8 +545,8 @@ async def test_a_lead_instantly_skipped_is_not_marked_contacted(state):  # noqa:
 
 @pytest.mark.asyncio
 async def test_a_draft_with_no_lead_instantly_takes_fails_instead_of_blocking(state):  # noqa: F811
-    from harvey.agents.sender import Sender
-    from harvey.models.campaign import Campaign, EmailStep
+    from sellbird.agents.sender import Sender
+    from sellbird.models.campaign import Campaign, EmailStep
     from tests.test_outbox_native import Env
     sender = Sender(brain=None, state=state, config=_cfg(provider="instantly", require_approval=False),
                     env=Env())
@@ -592,7 +592,7 @@ def test_more_legal_forms_and_names_that_only_look_like_one(name, short):
                                     "zhuanlan.zhihu.com", "beian.gov.cn", "dictionary.cambridge.org",
                                     "baike.baidu.com"])
 def test_dictionaries_and_registry_pages_are_junk(domain):
-    from harvey.collectors.discover import is_junk
+    from sellbird.collectors.discover import is_junk
     assert is_junk(domain)
 
 
@@ -603,13 +603,13 @@ def test_dictionaries_and_registry_pages_are_junk(domain):
     ("pryorlaw.com", "Pryor Law", False),
 ])
 def test_foreign_domains_and_scripts_are_outside_a_us_only_list(domain, name, outside):
-    from harvey.collectors.discover import outside_countries
+    from sellbird.collectors.discover import outside_countries
     assert outside_countries(domain, name, ["US"]) is outside
     assert outside_countries(domain, name, []) is False       # no list, no filter
 
 
 def test_advisor_firm_names_are_not_keywords_and_squashed_names_never_win():
-    from harvey.collectors.discover import brand_name, looks_like_keyword
+    from sellbird.collectors.discover import brand_name, looks_like_keyword
     assert not looks_like_keyword("Brightwater Life Advisors")
     assert brand_name('<meta property="og:site_name" content="Bwadvisors">', "bwadvisors.example") == ""
 
@@ -617,7 +617,7 @@ def test_advisor_firm_names_are_not_keywords_and_squashed_names_never_win():
 # ── guesses get another check when credits allow ──
 
 async def _scout_for_recheck(state, results):
-    from harvey.agents.scout import Scout
+    from sellbird.agents.scout import Scout
     scout = Scout.__new__(Scout)
     scout.state, scout.env = state, None
     calls = []
@@ -661,7 +661,7 @@ async def test_a_guess_is_tried_once_a_day(state):  # noqa: F811
 @pytest.mark.asyncio
 async def test_finding_pauses_while_reoon_is_empty_and_resumes_after(monkeypatch):
     from types import SimpleNamespace
-    from harvey.integrations import email_finder as ef
+    from sellbird.integrations import email_finder as ef
     env = SimpleNamespace(reoon_api_key="k", zerobounce_api_key="")
     monkeypatch.setattr(ef, "_hunter_api_key", lambda: "")
     monkeypatch.setattr(ef, "_REOON_EMPTY", {"empty": False})
@@ -681,8 +681,8 @@ async def test_finding_pauses_while_reoon_is_empty_and_resumes_after(monkeypatch
 @pytest.mark.asyncio
 async def test_the_scout_finds_nobody_while_paused(state, monkeypatch):  # noqa: F811
     from types import SimpleNamespace
-    import harvey.agents.scout as scout_mod
-    from harvey.agents.scout import VERIFICATION_PAUSED_KEY, Scout
+    import sellbird.agents.scout as scout_mod
+    from sellbird.agents.scout import VERIFICATION_PAUSED_KEY, Scout
 
     async def paused(env):
         return "Reoon has no verification credits left"

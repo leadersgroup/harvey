@@ -4,7 +4,7 @@ are in one of those countries. Elsewhere is never emailed; unknown waits for you
 import pytest
 from pydantic import ValidationError
 
-from harvey.config import ComplianceConfig
+from sellbird.config import ComplianceConfig
 from tests.test_outbox_native import (  # noqa: F401  (state is a fixture)
     FakeProvider, make_sender, seed_prospect, state,
 )
@@ -97,7 +97,7 @@ async def test_no_list_sends_anywhere(state):
 
 @pytest.mark.asyncio
 async def test_instantly_upload_leaves_out_unknown_and_foreign_prospects(state):
-    from harvey.agents.sender import Sender
+    from sellbird.agents.sender import Sender
     from tests.test_outbox_native import Cfg, Env
     cfg = Cfg()
     cfg.compliance = ComplianceConfig(allowed_countries=["US"])

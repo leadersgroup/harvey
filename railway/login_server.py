@@ -213,7 +213,7 @@ def login_page(msg: str = "") -> bytes:
 
 def password_page(msg: str = "", ok: bool = False) -> bytes:
     note = f"<div class='msg{' ok' if ok else ''}'>{html.escape(msg)}</div>" if msg else ""
-    return page("Change password · Harvey", f"""
+    return page("Change password · Sellbird", f"""
 <form method=post action=/_password>
   <h1>Change password</h1>{note}
   <label>Current password<input name=current type=password autocomplete=current-password required></label>

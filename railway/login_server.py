@@ -366,6 +366,12 @@ def main() -> int:
     if not configured():
         print("[login] WARNING: DASHBOARD_LOGIN_EMAIL or the password hash is not set; "
               "the dashboard refuses everyone until both are.", flush=True)
+    elif len(stored_hash().split("$")) != 3 or not stored_hash().startswith("scrypt$"):
+        print("[login] WARNING: the password hash isn't one login_server.py made; "
+              "no password will match it.", flush=True)
+    else:
+        source = "data/login-password" if PASSWORD_FILE.exists() else "DASHBOARD_LOGIN_PASSWORD_HASH"
+        print(f"[login] sign-in ready for one account (password from {source})", flush=True)
     ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
     return 0
 

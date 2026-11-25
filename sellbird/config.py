@@ -577,6 +577,8 @@ class QuietHoursConfig(BaseModel):
     start: str = "22:00"
     end: str = "07:00"
     timezone: str = "America/New_York"
+    # Saturday and Sunday (in ``timezone``) are quiet all day as well.
+    weekends: bool = False
 
     @field_validator("start", "end")
     @classmethod

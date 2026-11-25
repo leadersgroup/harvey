@@ -60,7 +60,10 @@ def in_quiet_hours(config: SellbirdConfig) -> bool:
     """Check if we're currently in quiet hours."""
     qh = config.usage.quiet_hours
     tz = pytz.timezone(qh.timezone)
-    now = datetime.now(tz).time()
+    moment = datetime.now(tz)
+    if getattr(qh, "weekends", False) and moment.weekday() >= 5:
+        return True
+    now = moment.time()
     start = time.fromisoformat(qh.start)
     end = time.fromisoformat(qh.end)
 
@@ -102,6 +105,10 @@ def seconds_until_quiet_hours_end(config: SellbirdConfig) -> int:
     if end_today <= now:
         # End time is tomorrow
         end_today = end_today + timedelta(days=1)
+    if getattr(qh, "weekends", False):
+        # Weekends are quiet all day: the next end falls on a weekday.
+        while end_today.weekday() >= 5:
+            end_today = end_today + timedelta(days=1)
 
     delta = end_today - now
     return max(int(delta.total_seconds()), 60)

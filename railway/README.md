@@ -18,6 +18,8 @@ mounted at `/data`.
 |---|---|
 | `CLAUDE_CODE_OAUTH_TOKEN` | Claude Pro/Max sign-in. Create it on your own computer with `claude setup-token`. No API key is used; `ANTHROPIC_API_KEY` is ignored on purpose. |
 | `HEARTBEAT_MINUTES` | Minutes between cycles, applied to the config on every boot (30). |
+| `QUIET_HOURS` | Hours Sellbird sleeps, as `17:00-09:00` in `usage.quiet_hours.timezone`, applied on every boot. |
+| `QUIET_WEEKENDS` | `1` to sleep all of Saturday and Sunday too, `0` to work weekends. |
 | `HARVEY_AUTORUN` | `1` starts the heartbeat loop at boot, so it resumes after a redeploy. Leave `0` until the old install is stopped. |
 | `BACKUP_GITHUB_REPO` | Private repository (`owner/name`) that receives a data snapshot two minutes after each start and every 24 hours (`BACKUP_HOURS`). |
 | `BACKUP_GITHUB_TOKEN` | Fine-grained GitHub token with Contents read/write on that repository only. |

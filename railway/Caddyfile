@@ -1,0 +1,38 @@
+# Public front for Harvey's dashboard. Harvey itself still listens only on
+# 127.0.0.1:5555 and still requires its bearer token on every API call; this
+# proxy only translates the public origin into the loopback one Harvey expects.
+{
+	admin off
+	auto_https off
+}
+
+:{$PORT} {
+	# Harvey refuses cross-origin browser requests by comparing Origin with its
+	# own loopback origin. The rewrite below would defeat that check, so the
+	# same rule is enforced here first, against the public origin.
+	@foreign {
+		header Origin *
+		not header Origin {$PUBLIC_ORIGIN}
+	}
+	respond @foreign "Cross-origin requests are refused." 403
+
+	# One-time data import (see railway/README.md); token-protected.
+	@import path /_import
+	handle @import {
+		request_body {
+			max_size 2GB
+		}
+		reverse_proxy 127.0.0.1:5556
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:5555 {
+			header_up Host 127.0.0.1:5555
+			header_up Origin "^.*$" "http://127.0.0.1:5555"
+			header_up -X-Forwarded-For
+			header_up -X-Forwarded-Host
+			header_up -X-Forwarded-Proto
+			flush_interval -1
+		}
+	}
+}
